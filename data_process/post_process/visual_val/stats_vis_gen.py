@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Optional, Dict, Tuple, List
 
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from blimpy import Waterfall
@@ -102,7 +103,7 @@ DEFAULT_XX_DIR = "/data/Raid0/obs_data/33exoplanets/xx/"
 # Window config
 FIXED_W2_MHZ = 0.00192
 DEFAULT_DPI = 300
-DEFAULT_FMT = "png"
+DEFAULT_FMT = ("pdf")
 VMIN_PCT = 2.0
 VMAX_PCT = 98.0
 FIGSIZE = (20, 8)
@@ -110,6 +111,7 @@ GROUP_ORDER = ["Ross-128", "GJ-9066"]
 NBS_EVENT_FREQ = 1148.4167512225800
 TOL = 1e-9  # MHz tolerance for locating signal of interest
 LABEL = "NBS 260108"
+GRID_STEP = 8 + (1 / 3)
 
 
 def ensure_numeric(series: pd.Series) -> pd.Series:
@@ -187,26 +189,6 @@ def get_tsamp_seconds(wf: Waterfall) -> float:
     return 1.0
 
 
-def plot_single_panel(arr_tf: np.ndarray, f_start: float, f_stop: float, tsamp: float,
-                      title: str, save_path: Path, dpi: int, fmt: str,
-                      figsize: Tuple[float, float], vmin: float, vmax: float):
-    n_t, _n_f = arr_tf.shape
-    tmax = tsamp * n_t
-
-    fig = plt.figure(figsize=figsize)
-    ax = fig.add_subplot(111)
-    im = ax.imshow(arr_tf, aspect="auto", origin="lower", extent=[f_start, f_stop, 0.0, tmax], vmin=vmin, vmax=vmax, )
-    ax.set_xlabel("Frequency (MHz)")
-    ax.set_ylabel("Time (s)")
-    ax.set_title(title)
-    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-    cbar.set_label("Intensity (arb.)")
-
-    fig.tight_layout()
-    fig.savefig(save_path.with_suffix(f".{fmt}"), dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
-
-
 def plot_freq_hist(freq_mhz: np.ndarray, out_path: Path,
                    df_mhz: float, fmin: float, fmax: float):
     freq_mhz = freq_mhz[np.isfinite(freq_mhz)]
@@ -257,11 +239,17 @@ def infer_snr_column(df: pd.DataFrame) -> Optional[str]:
     return None
 
 
-def plot_freq_snr_scatter(freq_mhz: np.ndarray, snr: np.ndarray, groups: np.ndarray, out_path: Path):
+def plot_freq_snr_scatter(freq_mhz: np.ndarray, snr: np.ndarray, groups: np.ndarray, out_path: Path,
+                          candidate_mask: Optional[np.ndarray] = None, candidate_label: Optional[str] = None):
     m = np.isfinite(freq_mhz) & np.isfinite(snr)
     if np.count_nonzero(m) == 0:
         print("[\033[33mWarning\033[0m] No finite (freq, snr) pairs to plot scatter.")
         return
+
+    if candidate_mask is not None:
+        candidate_mask = np.asarray(candidate_mask, dtype=bool)
+        if candidate_mask.shape != np.asarray(freq_mhz).shape:
+            candidate_mask = candidate_mask[m]
 
     freq_mhz = freq_mhz[m]
     snr = snr[m]
@@ -282,6 +270,11 @@ def plot_freq_snr_scatter(freq_mhz: np.ndarray, snr: np.ndarray, groups: np.ndar
     for g in uniq:
         idx = groups == g
         ax.scatter(freq_mhz[idx], snr[idx], s=30, alpha=0.85, label=g, c=[colors[g]], edgecolors="none", )
+
+    # highlight candidate(s)
+    if candidate_mask is not None and np.any(candidate_mask):
+        ax.scatter(freq_mhz[candidate_mask], snr[candidate_mask], s=140, marker="*", color="red",
+                   edgecolors="black", zorder=5, label=candidate_label)
 
     ax.set_xlabel("Uncorrected Frequency (MHz)")
     ax.set_ylabel("SNR")
@@ -330,14 +323,16 @@ def plot_deltaf_scan(freq_mhz: np.ndarray, out_path: Path, *, df_min_hz: float, 
 
     ax.set_xlabel("Δf (kHz)")
     ax.set_ylabel("Rayleigh locking statistic R(Δf)")
-    ax.set_title("Δf Scan via Rayleigh Comb Test")
+    ax.set_title("Δf Scan")
 
-    ax.grid(True, alpha=0.3)
+    ax.xaxis.set_major_locator(mticker.MultipleLocator(GRID_STEP))
+    ax.grid(True, which="major", axis="x", alpha=0.3)
+    ax.grid(True, which="major", alpha=0.3)
 
     # mark known engineering frequencies if provided
     if mark_known is not None:
         for val in mark_known:
-            ax.axvline(val * 1e-3, linestyle="--", linewidth=1.2, color="orange", alpha=0.6)
+            ax.axvline(val * 1e-3, linestyle="--", linewidth=1.2, color="gray", alpha=0.6)
 
     # mark global maximum
     idx_max = np.argmax(R_vals)
@@ -479,6 +474,30 @@ def build_group_file_map(folder: Path, beam_id: int) -> Dict[str, Path]:
         if gid not in out:
             out[gid] = f
     return out
+
+
+def plot_single_panel(arr_tf: np.ndarray, f_start: float, f_stop: float, tsamp: float,
+                      title: str, save_path: Path, dpi: int, fmt: str,
+                      figsize: Tuple[float, float], vmin: float, vmax: float):
+    n_t, _n_f = arr_tf.shape
+    tmax = tsamp * n_t
+
+    fig = plt.figure(figsize=figsize)
+    ax = fig.add_subplot(111)
+    im = ax.imshow(arr_tf, aspect="auto", origin="lower", extent=[f_start, f_stop, 0.0, tmax], vmin=vmin, vmax=vmax, )
+    ax.set_xlabel("Frequency (MHz)")
+    ax.set_ylabel("Time (s)")
+    ax.set_title(title)
+    import matplotlib.ticker as mticker
+    ax.xaxis.set_major_formatter(mticker.FormatStrFormatter('%.4f'))
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("Intensity (arb.)")
+    ax.tick_params(axis='x', pad=12)
+    ax.tick_params(axis='y', pad=12)
+
+    fig.tight_layout()
+    fig.savefig(save_path.with_suffix(f".{fmt}"), dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
 
 
 def run_source_vis(df: pd.DataFrame, out_dir: Path):
@@ -659,7 +678,7 @@ def main():
     df = df.dropna(subset=[COL_GROUP_ID, COL_BEAM_ID, COL_FREQ_MHZ]).copy()
 
     # ---- Histogram ----
-    hist_path = out_dir / "freq_hist.png"
+    hist_path = out_dir / f"freq_hist.{DEFAULT_FMT}"
     plot_freq_hist(
         freq_mhz=df[COL_FREQ_MHZ].to_numpy(dtype=float),
         out_path=hist_path,
@@ -674,18 +693,21 @@ def main():
     if snr_col is None:
         raise KeyError("Cannot find SNR column.")
     df[snr_col] = ensure_numeric(df[snr_col])
+    freq_mhz = df[COL_FREQ_MHZ].to_numpy(dtype=float)
 
-    scat_path = out_dir / "freq_snr_scatter.png"
+    scat_path = out_dir / f"freq_snr_scatter.{DEFAULT_FMT}"
     plot_freq_snr_scatter(
         freq_mhz=df[COL_FREQ_MHZ].to_numpy(dtype=float),
         snr=df[snr_col].to_numpy(dtype=float),
         groups=df[COL_GROUP_ID].astype(str).to_numpy(),
         out_path=scat_path,
+        candidate_mask=np.isclose(freq_mhz, NBS_EVENT_FREQ, atol=TOL),
+        candidate_label=LABEL
     )
     print(f"[\033[32mInfo\033[0m] Freq-SNR scatter saved: {scat_path}")
 
     # ---- Δf scan ----
-    scan_path = out_dir / "deltaf_scan.png"
+    scan_path = out_dir / f"deltaf_scan.{DEFAULT_FMT}"
 
     df_best = plot_deltaf_scan(
         freq_mhz=df[COL_FREQ_MHZ].to_numpy(dtype=float),
@@ -693,7 +715,7 @@ def main():
         df_min_hz=1000,
         df_max_hz=150000,
         df_step_hz=1,
-        mark_known=[33333.3333, 125000]
+        mark_known=None
     )
     print(f"[\033[32mInfo\033[0m] Δf scan saved: {scan_path}")
 
@@ -701,11 +723,10 @@ def main():
     df_comb = df_best if args.comb_df_hz is None else args.comb_df_hz
     print(f"[\033[32mInfo\033[0m] Running comb diagnostic with Δf={df_comb} Hz")
 
-    comb_path = out_dir / "comb_residual_phase.png"
+    comb_path = out_dir / f"comb_residual_phase.{DEFAULT_FMT}"
 
     # choose f0 as minimum frequency (simple deterministic choice)
     f0_mhz = float(df[COL_FREQ_MHZ].min())
-    freq_mhz = df[COL_FREQ_MHZ].to_numpy(dtype=float)
 
     plot_modf_residual(
         freq_mhz=freq_mhz,
@@ -722,7 +743,7 @@ def main():
     # ---- Optional source vis ----
     if args.render_source:
         if Settings.PROD:
-            mpl.rcParams["font.size"] = 45
+            mpl.rcParams["font.size"] = 40
         run_source_vis(df=df, out_dir=out_dir)
 
     print("\n[\033[32mInfo\033[0m] Done!")
