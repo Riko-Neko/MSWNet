@@ -14,7 +14,7 @@ This repository should be understood as a **full end-to-end pipeline** for SETI-
 4. Running patch-wise inference on real observations, including dual-polarization handling
 5. Exporting candidate hits and applying post-processing such as stitching, threshold filtering, and on-off veto
 
-The core model is already public. The correct public repository link is [Riko-Neko/MSWNe](https://github.com/Riko-Neko/MSWNe). The main implementations in this repository are under [`model/`](model/).
+The core model is already public. The public repository link is [Riko-Neko/MSWNet](https://github.com/Riko-Neko/MSWNet). The main implementations in this repository are under [`model/`](model/).
 
 ## Pipeline Overview
 
@@ -38,6 +38,22 @@ flowchart LR
 - **The intended narrative is pipeline-first, not model-first**. Real use typically involves `data/`, `gen/`, `main.py`, `pred.py`, and `data_process/post_process/`.
 - **Experimental and historical directories are not the stable path**. `dev/`, `old/`, `abandoned/`, and `archived/` are mainly for experiments or legacy code.
 
+## Visual Examples
+
+### Synthetic Samples
+
+| Clean | Noisy |
+| --- | --- |
+| ![Clean synthetic sample](plot/sim/clean_000.png) | ![Noisy synthetic sample](plot/no/noisy_000.png) |
+
+### MSWNet Prediction Examples
+
+<p align="center">
+  <img src="pred_results/plots/MSWNet/pred_0000.png" width="32%" />
+  <img src="pred_results/plots/MSWNet/pred_0001.png" width="32%" />
+  <img src="pred_results/plots/MSWNet/pred_0002.png" width="32%" />
+</p>
+
 ## Repository Layout
 
 | Path | Purpose |
@@ -59,7 +75,7 @@ flowchart LR
 It is recommended to use a dedicated virtual environment:
 
 ```bash
-git clone https://github.com/Riko-Neko/MSWNe.git
+git clone https://github.com/Riko-Neko/MSWNet.git
 cd MSWUNet
 
 python -m venv .venv
@@ -150,19 +166,6 @@ By default this:
 - loads `checkpoints/mswunet/bin256/final.pth`
 - writes plots to `pred_results/plots/MSWNet/`
 
-### Dual-Model Comparison
-
-```bash
-python pred.py --mode dbl
-```
-
-This runs the same inputs through:
-
-- `MSWNet`
-- `UNet`
-
-and stores comparison outputs under `pred_results/dbl/`.
-
 ### Training
 
 ```bash
@@ -198,7 +201,6 @@ This is the most important part of the repository.
 | `python pred.py --obs` | Runs the default single-model inference path on observation data, but this is closer to single-file inspection than full batch processing. |
 | `python pred.py --mode pipeline` | Full observation pipeline over files or polarization groups, including patch processing and hit export. |
 | `python pred.py --mode pipeline --ui` | Same pipeline, with the PyQt visualization interface enabled. |
-| `python pred.py --mode dbl` | Side-by-side comparison between `MSWNet` and `UNet`. |
 
 ### Configuration You Usually Need to Edit First
 
@@ -521,7 +523,7 @@ If you want to cite the repository itself, you can currently use:
 @software{mswnet_repo,
   author = {Riko-Neko},
   title = {MSWNet},
-  url = {https://github.com/Riko-Neko/MSWNe},
+  url = {https://github.com/Riko-Neko/MSWNet},
   year = {2026}
 }
 ```
