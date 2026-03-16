@@ -1,14 +1,27 @@
-torch>=1.1.0
-setigen~=2.7.0
-numpy~=2.2.5
-matplotlib
-tqdm~=4.67.1
-pywavelets~=1.8.0
-torchinfo~=1.8.0
-pandas~=2.2.3
-astropy~=7.0.0
-scipy~=1.15.3
-torchmetrics~=1.2.1
-requests~=2.32.4
-h5py~=3.14.0
-blimpy~=2.1.4
+# Core numerical / plotting
+numpy>=1.24
+matplotlib>=3.7
+pandas>=2.0
+scipy>=1.10
+tqdm>=4.66
+requests>=2.31
+h5py>=3.9
+networkx>=3.0
+
+# PyTorch stack
+torch>=2.1
+torchinfo>=1.8.0
+torchmetrics>=1.2.0
+
+# Wavelet / astronomy / synthetic data
+PyWavelets>=1.4
+pytorch-wavelets>=1.3.0
+astropy>=5.3
+setigen>=2.7.0
+blimpy>=2.1.4
+
+# Pipeline UI
+PyQt5>=5.15
+
+# Optional external baseline / verification
+turbo-seti>=2.3.0
