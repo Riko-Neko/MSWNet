@@ -564,4 +564,4 @@ If you want to cite the repository itself, you can currently use:
 }
 ```
 
-A paper-specific citation can be added later if needed.
+A paper-specific citation will be added once published.
