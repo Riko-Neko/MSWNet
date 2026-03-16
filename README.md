@@ -33,9 +33,9 @@ flowchart LR
 
 ## Repository Scope
 
-- **The current mainline is the detection pipeline**. The default training entry is [`main.py`](main.py), and the default inference entry is [`pred.py`](pred.py).
+- **The mainline workflow is the detection pipeline**. The default training entry is [`main.py`](main.py), and the default inference entry is [`pred.py`](pred.py).
 - **The core model is public**. Relevant implementations can be found in [`model/DetMSWNet.py`](model/DetMSWNet.py), [`model/MSWNet.py`](model/MSWNet.py), and [`model/UNet.py`](model/UNet.py).
-- **The intended narrative is pipeline-first, not model-first**. Real use typically involves `data/`, `gen/`, `main.py`, `pred.py`, and `data_process/post_process/`.
+- **The repository is organized around the full pipeline rather than a single model component**. Real use typically involves `data/`, `gen/`, `main.py`, `pred.py`, and `data_process/post_process/`.
 - **Experimental and historical directories are not the stable path**. `dev/`, `old/`, `abandoned/`, and `archived/` are mainly for experiments or legacy code.
 
 ## Visual Examples
@@ -59,7 +59,7 @@ flowchart LR
 | Path | Purpose |
 | --- | --- |
 | `main.py` | Training entry point. Defaults to detection mode and supports checkpoint resume. |
-| `pred.py` | Inference entry point. Supports synthetic inference, observation inference, full pipeline mode, and dual-model comparison. |
+| `pred.py` | Inference entry point. Supports synthetic inference, observation inference, and full pipeline mode. |
 | `model/` | `MSWNet`, `DetMSWNet`, `UNet`, and detection-head implementations. |
 | `gen/` | `setigen`-based dynamic-spectrum generation and dataset logic. |
 | `pipeline/` | Observation patch extraction, pipeline processor, and UI renderer. |
@@ -67,7 +67,7 @@ flowchart LR
 | `data/` | Filterbank download, inspection, and slicing scripts, plus sample data. |
 | `data_process/` | `turbo_seti` comparison scripts, post-processing, statistics, and visualization tools. |
 | `checkpoints/` | Saved weights and training logs. |
-| `pred_results/` | Output plots from synthetic inference or model comparison runs. |
+| `pred_results/` | Output plots from synthetic inference and saved example predictions. |
 | `plot/` | Figures used for examples and visualization. |
 
 ## Installation
@@ -89,13 +89,15 @@ pip install -r requirements.txt
 
 - `pred.py` imports `PyQt5` and `pipeline.renderer` at module import time, so **installing `PyQt5` is recommended even if you do not use `--ui`**.
 - `turbo-seti` is only needed for the scripts under `data_process/TruboSETI_*.py`; it is not required for the main detection pipeline.
-- The current codebase is more consistent with **Python 3.10+ and PyTorch 2.x** than with the older dependency notes from the original README.
+- Use **Python 3.10+ and PyTorch 2.x**.
 
 ## Data Conventions
 
 ### Observation Data
 
 The main pipeline supports `.fil` and `.h5`.
+
+Due to observation-side access and release requirements, this repository does **not** distribute real observation data such as FAST files. The repository is intended to provide the code, model implementations, pipeline logic, and synthetic testing path. Real observation files must be prepared separately by users who have the appropriate access and permissions.
 
 The default observation layout used by the repository is:
 
@@ -133,7 +135,7 @@ The current detection head performs **1D frequency-interval regression**, not 2D
 
 ### Real Background Mixing
 
-The default training configuration in [`main.py`](main.py) includes:
+One training configuration currently shown in [`main.py`](main.py) includes:
 
 ```python
 use_fil = True
@@ -142,7 +144,7 @@ fil_folder = Path('./data/33exoplanets/bg/clean')
 
 This means training will try to mix real `.fil` backgrounds into synthetic samples.
 
-If that directory does not exist or does not contain valid background files, you should either:
+If that directory does not exist or does not contain valid background files, you can either:
 
 - point `fil_folder` to your own background directory, or
 - set `use_fil = False`
@@ -151,7 +153,9 @@ Otherwise the training dataset configuration will not match the intended setup.
 
 ## Quick Start
 
-### Synthetic Inference
+The quickest way to test the repository is to stay entirely in the **synthetic** path. The steps below are designed so that anyone can run inference and a small training smoke test **without any real `.fil` observation files**.
+
+### Synthetic Inference Without Any Real Observation Files
 
 Run:
 
@@ -166,30 +170,53 @@ By default this:
 - loads `checkpoints/mswunet/bin256/final.pth`
 - writes plots to `pred_results/plots/MSWNet/`
 
-### Training
+### Synthetic Training Smoke Test Without Any Real Observation Files
+
+Before running training for the first time without real background filterbank files, edit [`main.py`](main.py) and set:
+
+```python
+use_fil = False
+```
+
+This disables the optional real-background mixing path and keeps training fully synthetic.
+
+For a short smoke test, it is also practical to temporarily reduce:
+
+```python
+num_epochs = 1
+steps_per_epoch = 5
+valid_steps = 2
+```
+
+Then run:
 
 ```bash
 python main.py -d 0
 ```
 
-Resume from the best saved weights:
+If you want to resume a longer synthetic run from the saved best weights:
 
 ```bash
 python main.py -d 0 -l
 ```
 
-The main training configuration is hard-coded near the top of [`main.py`](main.py), not exposed through a full CLI. The default setup includes:
+The main training configuration lives near the top of [`main.py`](main.py), not in a full CLI. The values there are intended to be adjusted for the training target, data regime, and stage of training. One current example configuration includes:
 
 - `mode = "detection"`
 - `fchans = 1024`
 - `checkpoint_dir = "./checkpoints/mswunet/bin1024"`
 - `freeze_backbone = True`
 
-So the current mainline behaves more like **detector-head training / fine-tuning on top of an existing backbone**.
+These are tunable training parameters, not fixed rules.
+
+For `freeze_backbone` specifically:
+
+- `freeze_backbone = False` trains the backbone and detector jointly
+- `freeze_backbone = True` freezes the backbone and updates only the detection module
+
+A practical strategy is to begin training with `freeze_backbone = False`, then switch to `freeze_backbone = True` in later-stage training to strengthen the detector module.
 
 ## Inference Pipeline
-
-This is the most important part of the repository.
 
 ### Inference Modes
 
@@ -232,7 +259,7 @@ the code pairs files from `xx/` and `yy/` directories by filename and beam ID, t
 - `dwtnet_ckpt = Path("./checkpoints/mswunet/bin256") / "final.pth"`
 - `detector_args["fchans"] = fchans`
 
-These values must stay consistent.
+These values are adjustable, but they must stay mutually consistent.
 
 If you switch from `256`-wide frequency patches to `1024`, you should also switch:
 
@@ -260,11 +287,11 @@ These directly affect:
 
 The full observation pipeline uses `SETIWaterFullDataset` from [`pipeline/patch_engine.py`](pipeline/patch_engine.py).
 
-Two practical details are important:
+Two implementation details are important:
 
 1. **The time axis is usually not split into multiple patches**
    - `SETIWaterFullDataset(..., t_adaptive=True)` adapts `patch_t` to the available observation length
-   - in practice this often means a single patch row across time, with sliding windows mainly along frequency
+   - this often means a single patch row across time, with sliding windows mainly along frequency
 2. **The frequency axis is processed by fixed-width sliding windows**
    - default `patch_f = 256`
    - default `overlap_pct = 0.02`
@@ -351,9 +378,9 @@ The training entry point is [`main.py`](main.py). The default stack is:
 - model: `model.DetMSWNet.MSWNet`
 - loss: `DetectionCombinedLoss`
 
-### Default Training Configuration
+### Training Configuration
 
-The current detection training defaults include:
+The detection configuration currently written in [`main.py`](main.py) includes:
 
 - `mode = "detection"`
 - `tchans = 116`
@@ -364,6 +391,15 @@ The current detection training defaults include:
 - `lr = 0.001`
 - `checkpoint_dir = "./checkpoints/mswunet/bin1024"`
 - `freeze_backbone = True`
+
+These values should be treated as editable run parameters rather than fixed recommendations.
+
+For `freeze_backbone`:
+
+- `False` means joint optimization of backbone and detector
+- `True` means freezing the backbone and emphasizing detector-only optimization
+
+A practical training schedule is to use `freeze_backbone = False` earlier in training and switch to `freeze_backbone = True` later to further strengthen the detection module.
 
 ### Training Outputs
 
@@ -378,7 +414,7 @@ The code keeps rolling checkpoints and updates `best_model.pth` when validation 
 
 ### About the Mask Path
 
-The repository still contains mask / RFI-mask-related code, losses, and historical branches, but the **current public mainline is the detection pipeline**.
+The repository still contains mask / RFI-mask-related code, losses, and historical branches, but the default public workflow is the detection pipeline.
 
 If you want to use the mask path, you should verify:
 
