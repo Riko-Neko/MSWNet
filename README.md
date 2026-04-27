@@ -106,11 +106,7 @@ Training and inference are now profile-driven rather than controlled by large bl
 
 The main public documentation below uses a short local profile named `quick_start`. It is intended as a compact public-facing example path for verifying the pipeline and synthetic workflow without exposing the longer internal observation-profile names in the README.
 
-The repository also explicitly supports **CE4 `.2C` observation products**, including dedicated runtime profiles and local inspection utilities. A typical CE4 pipeline entry is:
-
-```bash
-WORKFLOW=CE4 CONFIG=ce4 python pred.py --mode pipeline
-```
+The repository also includes a usable side path for **CE4 `.2C` observation products**, along with dedicated runtime profiles and local inspection utilities.
 
 ## Data Conventions
 
@@ -277,6 +273,18 @@ Pipeline with UI:
 
 ```bash
 python pred.py --mode pipeline --ui
+```
+
+For the CE4 `.2C` side path:
+
+```bash
+WORKFLOW=CE4 CONFIG=ce4 python pred.py --mode pipeline
+```
+
+For quick local inspection of a `.2C` product:
+
+```bash
+python data/CE4_2C_checker.py <your_file.2C> [f_start] [f_stop]
 ```
 
 ### What the Pipeline Actually Does
