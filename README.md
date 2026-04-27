@@ -106,7 +106,11 @@ Training and inference are now profile-driven rather than controlled by large bl
 
 The main public documentation below uses a short local profile named `quick_start`. It is intended as a compact public-facing example path for verifying the pipeline and synthetic workflow without exposing the longer internal observation-profile names in the README.
 
-The repository also includes sidework support for **CE4 `.2C` observation products**, including dedicated runtime profiles and local inspection utilities. That support reuses the same overall pipeline ideas and now covers end-to-end inference compatibility, but it is still treated as a secondary branch in this README. The main documentation below continues to focus on the standard FAST-style pipeline built around synthetic generation, training, observation inference, and candidate post-processing.
+The repository also explicitly supports **CE4 `.2C` observation products**, including dedicated runtime profiles and local inspection utilities. A typical CE4 pipeline entry is:
+
+```bash
+WORKFLOW=CE4 CONFIG=ce4 python pred.py --mode pipeline
+```
 
 ## Data Conventions
 
@@ -130,7 +134,7 @@ The expected file naming pattern is still:
 
 When polarization pairing is enabled by the selected profile, the pipeline matches the two directories by this naming convention and combines the paired inputs into `Stokes I` by default.
 
-As a side branch, the repository also supports CE4 `.2C` data through dedicated profiles and utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py). In practice the entry is still [`pred.py`](pred.py), with the runtime profile deciding whether the observation path is the standard FAST-style `.fil` / `.h5` workflow or the auxiliary CE4 `.2C` workflow.
+The repository also supports CE4 `.2C` data through dedicated profiles and utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py). In practice the entry is still [`pred.py`](pred.py), with the runtime profile deciding whether the observation path is the standard FAST-style `.fil` / `.h5` workflow or the CE4 `.2C` workflow.
 
 ### Synthetic Training Data
 
