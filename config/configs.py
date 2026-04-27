@@ -137,6 +137,7 @@ CONFIGS = {
 
         # Hits config
         "drift": [-4.0, 4.0],
+        "drift_abs_discard": 0.0,
         "snr_threshold": 5.0,
         "pad_fraction": 0.5,
         "fsnr_args": {

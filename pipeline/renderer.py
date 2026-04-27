@@ -18,9 +18,9 @@ from utils.det_utils import decode_F, plot_F_lines
 
 class SETIWaterfallRenderer(QWidget):
     def __init__(self, dataset, model, device, mode='detection', log_dir=Path("./pipeline/log"), verbose=False,
-                 parent=None, drift=[-4.0, 4.0], snr_threshold=5.0, pad_fraction=0.2, min_abs_drift=0.05,
-                 iou_thresh=0.5, score_thresh=0.5, top_k=10, fsnr_threshold=300, top_fraction=0.002, min_pixels=50,
-                 detect_backend='regressor', trackline_detector=None):
+                 parent=None, drift=[-4.0, 4.0], snr_threshold=5.0, pad_fraction=0.2, drift_abs_discard=0.0,
+                 iou_thresh=0.5, score_thresh=0.5, top_k=10, fsnr_threshold=300,
+                 top_fraction=0.002, min_pixels=50, detect_backend='regressor', trackline_detector=None):
         """
         Initialize the SETI waterfall renderer with dataset and model
 
@@ -34,7 +34,7 @@ class SETIWaterfallRenderer(QWidget):
             drift: Drift rate range for mask mode [min_drift, max_drift] in Hz/s
             snr_threshold: SNR threshold for mask mode hits detection
             pad_fraction: Fraction of extents to pad the events in detection
-            min_abs_drift: Minimum absolute drift rate for mask mode
+            drift_abs_discard: Minimum absolute drift rate to keep for pipeline hit filtering
             iou_thresh: IoU threshold for detection mode NMS
             score_thresh: Confidence threshold for detection mode NMS
             top_k: Maximum number of detections to keep per patch
@@ -43,7 +43,7 @@ class SETIWaterfallRenderer(QWidget):
         self.mode = mode
         self.drift = drift
         self.snr_threshold = snr_threshold
-        self.min_abs_drift = min_abs_drift
+        self.drift_abs_discard = drift_abs_discard
         self.nms_iou_thresh = iou_thresh
         self.nms_score_thresh = score_thresh
         self.nms_top_k = top_k
@@ -56,9 +56,10 @@ class SETIWaterfallRenderer(QWidget):
         # Initialize processor with mode-specific parameters
         self.processor = SETIPipelineProcessor(
             dataset, model, device, mode=mode, log_dir=log_dir, verbose=verbose, drift=drift,
-            snr_threshold=snr_threshold, pad_fraction=pad_fraction, min_abs_drift=min_abs_drift, iou_thresh=iou_thresh,
-            score_thresh=score_thresh, top_k=top_k, fsnr_threshold=fsnr_threshold, top_fraction=top_fraction,
-            min_pixels=min_pixels, detect_backend=detect_backend, trackline_detector=trackline_detector)
+            snr_threshold=snr_threshold, pad_fraction=pad_fraction, drift_abs_discard=drift_abs_discard,
+            iou_thresh=iou_thresh, score_thresh=score_thresh, top_k=top_k,
+            fsnr_threshold=fsnr_threshold, top_fraction=top_fraction, min_pixels=min_pixels,
+            detect_backend=detect_backend, trackline_detector=trackline_detector)
         self.ascending = self.processor.ascending
 
         self.dataset = self.processor.dataset
@@ -529,7 +530,7 @@ class SETIWaterfallRenderer(QWidget):
                 max_drift=self.drift[1],
                 min_drift=self.drift[0],
                 snr_threshold=self.snr_threshold,
-                min_abs_drift=self.min_abs_drift,
+                min_abs_drift=self.drift_abs_discard,
                 merge_tol=10000
             )
         return df_hits

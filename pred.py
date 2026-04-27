@@ -72,6 +72,7 @@ P = _config["P"]
 nms_kargs = _config["nms_kargs"]
 
 drift = _config["drift"]
+drift_abs_discard = _config["drift_abs_discard"]
 snr_threshold = _config["snr_threshold"]
 pad_fraction = _config["pad_fraction"]
 fsnr_args = _config["fsnr_args"]
@@ -375,7 +376,7 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
                 if RAW:
                     print("[\033[33mWarn\033[0m] UI mode cannot be used with RAW output, using original config...")
                 renderer = SETIWaterfallRenderer(dataset, model, device, mode=pmode, log_dir=f_log_dir, drift=drift,
-                                                 snr_threshold=snr_threshold, min_abs_drift=drift_min_abs,
+                                                 snr_threshold=snr_threshold, drift_abs_discard=drift_abs_discard,
                                                  verbose=verbose, detect_backend=active_detect_backend,
                                                  trackline_detector=trackline_detector, **nms_kargs, **fsnr_args)
                 renderer.setWindowTitle(f"SETI Waterfall Data Processor - {f_log_dir}")
@@ -392,7 +393,7 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
                         "[\033[33mWarn\033[0m] You are logging raw data, which may be extremely large. Make sure you have enough space.")
                 processor = SETIPipelineProcessor(dataset, model, device, mode=pmode, log_dir=f_log_dir,
                                                   raw_output=RAW, drift=drift, snr_threshold=snr_threshold,
-                                                  pad_fraction=pad_fraction, min_abs_drift=drift_min_abs,
+                                                  pad_fraction=pad_fraction, drift_abs_discard=drift_abs_discard,
                                                   verbose=verbose, detect_backend=active_detect_backend,
                                                   trackline_detector=trackline_detector, **nms_kargs, **fsnr_args)
                 processor.process_all_patches()

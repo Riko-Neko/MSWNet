@@ -11,9 +11,9 @@ from utils.metrics_utils import execute_hits_hough, SNR_filter
 
 class SETIPipelineProcessor:
     def __init__(self, dataset, model, device, mode='mask', log_dir=Path("./pipeline/log"), verbose=False,
-                 raw_output=False, drift=[-4.0, 4.0], snr_threshold=10.0, pad_fraction=0.2, min_abs_drift=0.05,
-                 iou_thresh=0.5, score_thresh=0.5, top_k=10, fsnr_threshold=300, top_fraction=0.002, min_pixels=50,
-                 detect_backend='regressor', trackline_detector=None):
+                 raw_output=False, drift=[-4.0, 4.0], snr_threshold=10.0, pad_fraction=0.2, drift_abs_discard=0.0,
+                 iou_thresh=0.5, score_thresh=0.5, top_k=10, fsnr_threshold=300,
+                 top_fraction=0.002, min_pixels=50, detect_backend='regressor', trackline_detector=None):
         """
         Initialize the SETI pipeline processor with dataset and model
 
@@ -28,7 +28,7 @@ class SETIPipelineProcessor:
             drift: Drift rate range for mask mode [min_drift, max_drift] in Hz/s
             snr_threshold: SNR threshold for mask mode hits detection
             pad_fraction: Fraction of extents to pad the events in detection.
-            min_abs_drift: Minimum absolute drift rate for mask mode
+            drift_abs_discard: Minimum absolute drift rate to keep for pipeline hit filtering
             iou_thresh: IoU threshold for detection mode NMS
             score_thresh: Confidence threshold for detection mode NMS
             top_k: Maximum number of detections to keep per patch
@@ -47,6 +47,8 @@ class SETIPipelineProcessor:
         self.detect_backend = detect_backend
         self.trackline_detector = trackline_detector
         self.snr_threshold = snr_threshold if not raw_output else 0.0
+        self.drift = drift
+        self.drift_abs_discard = drift_abs_discard
 
         # Grid dimensions
         self.grid_height = len(dataset.start_t_list)
@@ -68,10 +70,7 @@ class SETIPipelineProcessor:
                             for _ in range(self.grid_height)]
 
         # Mode-specific parameters
-        if self.mode == 'mask':
-            self.drift = drift
-            self.min_abs_drift = min_abs_drift
-        else:  # detection mode
+        if self.mode != 'mask':  # detection mode
             self.nms_iou_thresh = iou_thresh if not raw_output else 1.0
             self.nms_score_thresh = score_thresh if not raw_output else 0.0
             self.nms_top_k = top_k if not raw_output else None
@@ -178,6 +177,10 @@ class SETIPipelineProcessor:
                 line_duration = abs_t1 - abs_t0
                 freq_change_hz = (f_stop - f_start) * 1e6
                 drift_rate = freq_change_hz / line_duration if abs(line_duration) > 1e-12 else 0.0
+                if drift_rate < self.drift[0] or drift_rate > self.drift[1]:
+                    continue
+                if self.drift_abs_discard > 0 and abs(drift_rate) < self.drift_abs_discard:
+                    continue
                 relative_drift_rate = -drift_rate if not self.ascending else drift_rate
                 uncorr_freq = f_start
                 snr_val = 0.0
@@ -256,6 +259,10 @@ class SETIPipelineProcessor:
             # Calculate drift rate (Hz/s)
             freq_change_hz = (f_stop - f_start) * 1e6  # Convert MHz to Hz
             drift_rate = freq_change_hz / time_duration if time_duration > 0 else 0.0
+            if drift_rate < self.drift[0] or drift_rate > self.drift[1]:
+                continue
+            if self.drift_abs_discard > 0 and abs(drift_rate) < self.drift_abs_discard:
+                continue
             relative_drift_rate = -drift_rate if not self.ascending else drift_rate
 
             # Determine uncorrected frequency (starting frequency)
@@ -400,7 +407,7 @@ class SETIPipelineProcessor:
                         max_drift=self.drift[1],
                         min_drift=self.drift[0],
                         snr_threshold=self.snr_threshold,
-                        min_abs_drift=self.min_abs_drift,
+                        min_abs_drift=self.drift_abs_discard,
                         merge_tol=10000
                     )
 
