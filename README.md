@@ -34,8 +34,12 @@ flowchart LR
 ## Repository Scope
 
 - **The mainline workflow is the detection pipeline**. The default training entry is [`main.py`](main.py), and the default inference entry is [`pred.py`](pred.py).
+- **The mainline public path is still the FAST-style observation pipeline built around `.fil` / `.h5` inputs**. That is the path emphasized in this README.
 - **The core model is public**. Relevant implementations can be found in [`model/DetMSWNet.py`](model/DetMSWNet.py), [`model/MSWNet.py`](model/MSWNet.py), and [`model/UNet.py`](model/UNet.py).
 - **The repository is organized around the full pipeline rather than a single model component**. Real use typically involves `data/`, `gen/`, `main.py`, `pred.py`, and `data_process/post_process/`.
+- **Detection now has two backend styles under the same pipeline concept**:
+  - the original regression head (`DetMSWNet -> decode_F`)
+  - a lighter `trackline` backend (`MSWNet/DetMSWNet -> denoise -> line fitting`)
 - **Experimental and historical directories are not the stable path**. `dev/`, `old/`, `abandoned/`, and `archived/` are mainly for experiments or legacy code.
 
 ## Visual Examples
@@ -102,13 +106,13 @@ Training and inference are now profile-driven rather than controlled by large bl
 
 The main public documentation below uses a short local profile named `quick_start`. It is intended as a compact public-facing example path for verifying the pipeline and synthetic workflow without exposing the longer internal observation-profile names in the README.
 
-An auxiliary CE4 branch is also available through dedicated profiles and `.2C` utilities, but it is treated as a side path. The main documentation below focuses on the standard pipeline built around synthetic generation, training, observation inference, and candidate post-processing.
+The repository also includes sidework support for **CE4 `.2C` observation products**, including dedicated runtime profiles and local inspection utilities. That support reuses the same overall pipeline ideas and now covers end-to-end inference compatibility, but it is still treated as a secondary branch in this README. The main documentation below continues to focus on the standard FAST-style pipeline built around synthetic generation, training, observation inference, and candidate post-processing.
 
 ## Data Conventions
 
 ### Observation Data
 
-The main pipeline supports `.fil` and `.h5`.
+The mainline observation pipeline supports `.fil` and `.h5`.
 
 Due to observation-side access and release requirements, this repository does **not** distribute real observation data such as FAST files. The repository is intended to provide the code, model implementations, pipeline logic, and synthetic testing path. Real observation files must be prepared separately by users who have the appropriate access and permissions.
 
@@ -126,7 +130,7 @@ The expected file naming pattern is still:
 
 When polarization pairing is enabled by the selected profile, the pipeline matches the two directories by this naming convention and combines the paired inputs into `Stokes I` by default.
 
-As a side branch, the repository also supports CE4 `.2C` data through dedicated profiles and utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py). That path reuses the same pipeline concepts, but it is not the primary focus of this README.
+As a side branch, the repository also supports CE4 `.2C` data through dedicated profiles and utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py). In practice the entry is still [`pred.py`](pred.py), with the runtime profile deciding whether the observation path is the standard FAST-style `.fil` / `.h5` workflow or the auxiliary CE4 `.2C` workflow.
 
 ### Synthetic Training Data
 
@@ -237,7 +241,7 @@ Before running on real observations, review the active profile in four groups:
    - patch-level SNR gates
    - drift / dedrift settings
 
-These values are adjustable profile parameters. The main consistency rule is that patch width, detector width, and checkpoint selection must match each other.
+These values are adjustable profile parameters. The main consistency rule is that patch width, detector width, detector backend, and checkpoint selection must match each other.
 
 ### Patch Extraction Logic
 
@@ -283,8 +287,9 @@ In `python pred.py --mode pipeline`, the workflow is:
 6. For each frequency patch:
    - normalize the patch
    - denoise it
-   - regress frequency start/end positions
-   - decode confidence scores
+   - run the configured detection backend
+   - either regress frequency start/end positions and decode confidence scores
+   - or run the lighter trackline path on the denoised patch
    - apply patch-level `gSNR` filtering
    - export candidate hits
 7. Write logs and candidate tables to disk
@@ -299,7 +304,7 @@ Each run creates files under `pipeline/log/<log_dir>/`:
 
 The `.csv` file is the sorted version of the `.dat` file.
 
-Important columns include:
+Important columns depend slightly on the selected detection backend, but the main exported fields include:
 
 | Column | Meaning |
 | --- | --- |
@@ -307,8 +312,10 @@ Important columns include:
 | `SNR` | Local candidate SNR |
 | `Uncorrected_Frequency` | Candidate frequency in MHz |
 | `freq_start`, `freq_end` | Candidate frequency bounds in MHz |
-| `class_id` | Detection-head class output |
-| `confidence` | Detection-head confidence |
+| `class_id` | Detection-head class output in the original regression backend |
+| `confidence` | Detection-head confidence in the original regression backend, or compatibility score in the trackline backend |
+| `Score` | Trackline backend score |
+| `RMSE`, `NPoints` | Trackline backend line-fit diagnostics |
 | `cell_row`, `cell_col` | Patch-grid coordinates |
 | `gSNR` | Patch-level global SNR |
 | `freq_min`, `freq_max` | Frequency range covered by the patch |
