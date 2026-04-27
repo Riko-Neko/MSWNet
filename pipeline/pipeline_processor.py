@@ -70,7 +70,7 @@ class SETIPipelineProcessor:
                             for _ in range(self.grid_height)]
 
         # Mode-specific parameters
-        if self.mode != 'mask':  # detection mode
+        if self.mode == 'detection':
             self.nms_iou_thresh = iou_thresh if not raw_output else 1.0
             self.nms_score_thresh = score_thresh if not raw_output else 0.0
             self.nms_top_k = top_k if not raw_output else None

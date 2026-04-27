@@ -227,6 +227,7 @@ CONFIGS = {
         "Beam": None,
         "ignore_polarization": False,
         "drift": [-1000.0, 1000.0],
+        "drift_abs_discard": 7.805
     },
 
     "train1024bin": {
