@@ -149,32 +149,26 @@ CONFIGS = {
             "dt_s": 10.200547328,
             "guard_bins": 3,
         },
-
     },
 
-    "ce4train256": {
-        "fchans": 256,
-        "tchans": 256,
-        "fch1": 0.,
-        "snr_min": 300.0,
-        "snr_max": 600.0,
-        "width_min": 1e3,
-        "width_max": 1e4,
-        "drift_min": -1000.0,  # 19000 // 10
-        "drift_max": 1000.0,
-        "drift_min_abs": 20 * (40 - 1.016) * 1e6 // (2001 - 1) // (256 * 9.755183743169399),
-        "num_signals": (0, 1),
-        "background_fil": list(Path("./data/CE4/bg").rglob("*.2C")),
-        "batch_size": 16,
-        "checkpoint_dir": "./checkpoints/CE4/mswunet/bin256",
-        "N": 5,
-        "detector_args": {
-            "fchans": 256,
-            "N": 5,
-            "num_classes": 2,
-            "feat_channels": 64,
-            "dropout": 0.05,
-        },
+    "quick_start": {
+        # synthetic path
+        "use_fil": False,
+        "background_fil": [],
+        "checkpoint_dir": "./checkpoints/<path-to-your-output-checkpoints>",
+
+        # local observation quick-start path
+        "dwtnet_ckpt": Path("./checkpoints/<path-to-your-mswnet-weights>") / "mswnet-bin256-final.pth",
+        "unet_ckpt": Path("./checkpoints/<path-to-your-unet-weights>") / "unet-final.pth",
+        "pred_steps": 9999999,
+        "adaptive_scale": None,
+        "obs_suffixes": [".fil", ".h5"],
+        "obs_file_path": ["./data/<path-to-your-data>/xx/", "./data/<path-to-your-data>/yy/"],
+        "Beam": None,
+        "YY_dir": "./data/<path-to-your-data>/yy/",
+        "XX_dir": "./data/<path-to-your-data>/xx/",
+        "stokes_mode": "I",
+        "ignore_polarization": True,
     },
 
     "33exoplanets": {
@@ -188,21 +182,6 @@ CONFIGS = {
         "Beam": None,
         "YY_dir": "/data/Raid0/obs_data/33exoplanets/yy/",
         "XX_dir": "/data/Raid0/obs_data/33exoplanets/xx/",
-        "stokes_mode": "I",
-        "ignore_polarization": True,
-    },
-
-    "33exoplanets_local": {
-        # pipeline
-        "dwtnet_ckpt": Path("./checkpoints/mswunet/bin256") / "final.pth",
-        "unet_ckpt": Path("./checkpoints/unet") / "best_model.pth",
-        "pred_steps": 9999999,
-        "adaptive_scale": None,
-        "obs_suffixes": [".fil", ".h5"],
-        "obs_file_path": ["./data/33exoplanets/xx/", "./data/33exoplanets/yy/"],
-        "Beam": None,
-        "YY_dir": "./data/33exoplanets/yy/",
-        "XX_dir": "./data/33exoplanets/xx/",
         "stokes_mode": "I",
         "ignore_polarization": True,
     },
@@ -249,24 +228,142 @@ CONFIGS = {
         "drift": [-1000.0, 1000.0],
     },
 
-    "quick_start": {
-        # synthetic path
-        "use_fil": False,
-        "background_fil": [],
-        "checkpoint_dir": "./checkpoints/<path-to-your-output-checkpoints>",
+    "train1024bin": {
+        # extracted from abandoned/main_b1024.py
+        "fchans": 1024,
+        "snr_min": 30.0,
+        "snr_max": 50.0,
+        "width_min": 7.5,
+        "width_max": 20,
+        "fil_folder": Path("./data/33exoplanets/bg/clean"),
+        "background_fil": list(Path("./data/33exoplanets/bg/clean").rglob("*.fil")),
+        "batch_size": 16,
+        "num_epochs": 99999,
+        "checkpoint_dir": "./checkpoints/mswunet/bin1024",
+        "N": 10,
+        "detector_args": {
+            "fchans": 1024,
+            "N": 10,
+            "num_classes": 2,
+            "feat_channels": 64,
+            "dropout": 0.001,
+        },
+        "regress_loss_args": {
+            "lambda_denoise": 0.5,
+            "loss_type": "mse",
+            "lambda_learnable": False,
+            "regression_loss_kwargs": {
+                "num_classes": 2,
+                "N": 10,
+                "w_loc": 1.75,
+                "w_class": 0.05,
+                "w_conf": 0.5,
+                "eps": 1e-8,
+            },
+        },
+    },
 
-        # local observation quick-start path
-        "dwtnet_ckpt": Path("./checkpoints/<path-to-your-mswnet-weights>") / "mswnet-bin256-final.pth",
-        "unet_ckpt": Path("./checkpoints/<path-to-your-unet-weights>") / "unet-final.pth",
-        "pred_steps": 9999999,
-        "adaptive_scale": None,
-        "obs_suffixes": [".fil", ".h5"],
-        "obs_file_path": ["./data/<path-to-your-data>/xx/", "./data/<path-to-your-data>/yy/"],
-        "Beam": None,
-        "YY_dir": "./data/<path-to-your-data>/yy/",
-        "XX_dir": "./data/<path-to-your-data>/xx/",
-        "stokes_mode": "I",
-        "ignore_polarization": True,
+    "train512bin": {
+        # extracted from abandoned/main_b512.py
+        "fchans": 512,
+        "snr_min": 30.0,
+        "snr_max": 50.0,
+        "width_min": 7.5,
+        "width_max": 20,
+        "fil_folder": Path("./data/33exoplanets/bg/clean"),
+        "background_fil": list(Path("./data/33exoplanets/bg/clean").rglob("*.fil")),
+        "batch_size": 16,
+        "num_epochs": 99999,
+        "freeze_backbone": False,
+        "checkpoint_dir": "./checkpoints/mswunet/bin512",
+        "N": 10,
+        "detector_args": {
+            "fchans": 512,
+            "N": 10,
+            "num_classes": 2,
+            "feat_channels": 64,
+            "dropout": 0.005,
+        },
+        "regress_loss_args": {
+            "lambda_denoise": 1.0,
+            "loss_type": "mse",
+            "lambda_learnable": False,
+            "regression_loss_kwargs": {
+                "num_classes": 2,
+                "N": 10,
+                "w_loc": 1.5,
+                "w_class": 0.1,
+                "w_conf": 0.3,
+                "eps": 1e-8,
+            },
+        },
+    },
+
+    "train256bin": {
+        # extracted from abandoned/main_b256.py
+        "snr_min": 30.0,
+        "snr_max": 50.0,
+        "width_min": 7.5,
+        "width_max": 20,
+        "fil_folder": Path("./data/33exoplanets/bg/clean"),
+        "background_fil": list(Path("./data/33exoplanets/bg/clean").rglob("*.fil")),
+        "batch_size": 64,
+        "num_epochs": 99999,
+        "eta_min": 1.0e-11,
+        "regress_loss_args": {
+            "lambda_denoise": 0.5,
+            "loss_type": "mse",
+            "lambda_learnable": False,
+            "regression_loss_kwargs": {
+                "num_classes": 2,
+                "N": 5,
+                "w_loc": 1.5,
+                "w_class": 0.05,
+                "w_conf": 0.3,
+                "eps": 1e-8,
+            },
+        },
+    },
+
+    "ce4train256bin": {
+        "fchans": 256,
+        "tchans": 256,
+        "fch1": 0.,
+        "snr_min": 300.0,
+        "snr_max": 600.0,
+        "width_min": 1e3,
+        "width_max": 1e4,
+        "drift_min": -1000.0,  # 19000 // 10
+        "drift_max": 1000.0,
+        "drift_min_abs": 20 * (40 - 1.016) * 1e6 // (2001 - 1) // (256 * 9.755183743169399),
+        "num_signals": (0, 1),
+        "background_fil": list(Path("./data/CE4/bg").rglob("*.2C")),
+        "batch_size": 16,
+        "checkpoint_dir": "./checkpoints/CE4/mswunet/bin256",
+        "N": 5,
+        "detector_args": {
+            "fchans": 256,
+            "N": 5,
+            "num_classes": 2,
+            "feat_channels": 64,
+            "dropout": 0.05,
+        },
+    },
+
+    "RAW_pred": {
+        # extracted from abandoned/pred_raw.py
+        "XX_dir": "/data/Raid0/obs_data/33exoplanets/xx/",
+        "YY_dir": "/data/Raid0/obs_data/33exoplanets/yy/",
+        "Beam": [1],
+        "obs_file_path": ["/data/Raid0/obs_data/33exoplanets/xx/", "/data/Raid0/obs_data/33exoplanets/yy/"],
+        "RAW": True,
+        "num_workers": 4,
+        "pred_steps": 1000,
+        "dwtnet_ckpt": Path("./checkpoints/mswunet/bin256") / "best_model.pth",
+        "nms_kargs": {
+            "iou_thresh": 1.0,
+            "score_thresh": 0.5,
+        },
     },
 }
 
