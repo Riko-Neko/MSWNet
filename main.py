@@ -35,6 +35,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torchinfo import summary
 
+from config.configs import load_config
 from gen.SETIdataset import DynamicSpectrumDataset
 from model.DetMSWNet import MSWNet
 from model.utils.Regressor1D import FreqRegressionDetector
@@ -42,98 +43,58 @@ from utils.loss_func import DetectionCombinedLoss, MaskCombinedLoss
 from utils.train_core import train_model
 from utils.train_utils import safe_load_state_dict, load_optimizer_selectively
 
-# modes
-# mode = 'yolo'
-mode = "detection"
-# mode = "mask"
+_config = load_config()
 
-# Data config
-tchans = 116
-fchans = 1024
-# fchans = 256
-df = 7.450580597
-dt = 10.200547328
-fch1 = None
-ascending = True
-drift_min = -4.0
-drift_max = 4.0
-drift_min_abs = df // (tchans * dt)
-snr_min = 30.0
-snr_max = 50.0
-width_min = 7.5
-width_max = 20
-num_signals = (0, 1)
-noise_std_min = 0.025
-noise_std_max = 0.05
-noise_mean_min = 2
-noise_mean_max = 3
-nosie_type = "chi2"
-rfi_enhance = False
-use_fil = True
-fil_folder = Path('./data/33exoplanets/bg/clean')
-background_fil = list(fil_folder.rglob("*.fil"))
+mode = _config["pmode"]
+tchans = _config["tchans"]
+fchans = _config["fchans"]
+df = _config["df"]
+dt = _config["dt"]
+fch1 = _config["fch1"]
+ascending = _config["ascending"]
+drift_min = _config["drift_min"]
+drift_max = _config["drift_max"]
+drift_min_abs = _config["drift_min_abs"]
+snr_min = _config["snr_min"]
+snr_max = _config["snr_max"]
+width_min = _config["width_min"]
+width_max = _config["width_max"]
+num_signals = _config["num_signals"]
+noise_std_min = _config["noise_std_min"]
+noise_std_max = _config["noise_std_max"]
+noise_mean_min = _config["noise_mean_min"]
+noise_mean_max = _config["noise_mean_max"]
+nosie_type = _config["nosie_type"]
+rfi_enhance = _config["rfi_enhance"]
+use_fil = _config["use_fil"]
+background_fil = _config["background_fil"]
 
-# Training config
-batch_size = 16
-num_workers = 0
-num_epochs = 1000
-steps_per_epoch = 200
-valid_interval = 1
-valid_steps = 50
-log_interval = 50
-lr = 0.001
-weight_decay = 1.e-9
-T_max = 30
-eta_min = 1.0e-15
-force_save_best = True
-freeze_backbone = True
-force_reconstruct = False
-mismatch_load = True
-# checkpoint_dir = "./checkpoints/unet"
-checkpoint_dir = "./checkpoints/mswunet/bin1024"
-# checkpoint_dir = "./checkpoints/mswunet/bin256"
+batch_size = _config["batch_size"]
+num_workers = _config["num_workers"]
+num_epochs = _config["num_epochs"]
+steps_per_epoch = _config["steps_per_epoch"]
+valid_interval = _config["valid_interval"]
+valid_steps = _config["valid_steps"]
+log_interval = _config["log_interval"]
+lr = _config["lr"]
+weight_decay = _config["weight_decay"]
+T_max = _config["T_max"]
+eta_min = _config["eta_min"]
+force_save_best = _config["force_save_best"]
+freeze_backbone = _config["freeze_backbone"]
+force_reconstruct = _config["force_reconstruct"]
+mismatch_load = _config["mismatch_load"]
+checkpoint_dir = _config["checkpoint_dir"]
 
-# Model config
-dim = 64
-levels = [2, 4, 8, 16]
-dwtnet_args = dict(
-    in_chans=1,
-    dim=dim,
-    levels=levels,
-    wavelet_name='db4',
-    extension_mode='periodization')
-unet_args = dict()
-
+dim = _config["dim"]
+levels = _config["levels"]
+dwtnet_args = _config["dwtnet_args"]
+unet_args = _config["unet_args"]
 detector = FreqRegressionDetector
-# detector = HRFreqRegressionDetector
-feat_channels = 64
-N = 10
-detector_args = dict(
-    fchans=fchans,
-    N=N,
-    num_classes=2,
-    feat_channels=feat_channels,
-    dropout=0.005)
-
-regress_loss_args = dict(
-    lambda_denoise=0.,
-    loss_type='mse',
-    lambda_learnable=False,
-    regression_loss_kwargs=dict(
-        num_classes=2,
-        N=N,
-        w_loc=1.5,
-        w_class=0.1,
-        w_conf=0.5,
-        eps=1e-8))
-
-mask_loss_args = dict(
-    alpha=1.0,
-    beta=0.,
-    gamma=0.,
-    delta=0.,
-    momentum=0.99,
-    fixed_g_d=True)
+detector_args = _config["detector_args"]
+regress_loss_args = _config["regress_loss_args"]
+mask_loss_args = _config["mask_loss_args"]
+del _config
 
 
 # Main function

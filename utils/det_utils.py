@@ -201,10 +201,10 @@ def extract_F_slice(tensor_2d: torch.Tensor, f_start_norm: float, f_stop_norm: f
     return sliced, f_start_pad, f_stop_pad, idx_start, idx_end
 
 
-def plot_F_lines(ax, freqs, pred_boxes, normalized=True, snrs=None, color=['red', 'green'], linestyle='--',
-                 linewidth=0.5):
+def plot_F_lines(ax, freqs, pred_boxes, draw='box', normalized=True, snrs=None, color=['red', 'green'], linestyle='--',
+                 linewidth=0.5, t_idxs=None):
     """
-    Plot detected frequency start/stop as **vertical lines** (not boxes).
+    Plot detected frequency start/stop as vertical lines or fitted lines.
     Preserves physical meaning: f_start > f_stop means negative drift.
     Supports arbitrary class IDs with strict color validation.
 
@@ -219,6 +219,8 @@ def plot_F_lines(ax, freqs, pred_boxes, normalized=True, snrs=None, color=['red'
         normalized (bool): If True, f_starts/f_stops in [0,1]
         snrs (array-like): Array of SNR values (length = N).
         color (list[str]): List of colors, must have length >= (max_class_id + 1)
+        draw (str | None): "box" for vertical start/stop lines, "line" for fitted lines,
+            None for no line drawing while keeping SNR text.
         linestyle, linewidth: matplotlib line style
     """
     if len(pred_boxes) == 4:
@@ -245,14 +247,26 @@ def plot_F_lines(ax, freqs, pred_boxes, normalized=True, snrs=None, color=['red'
         return "unknown"
 
     f_starts, f_stops, classes = map(to_numpy, (f_starts, f_stops, classes))
+    if t_idxs is not None:
+        if len(t_idxs) != 2:
+            raise ValueError(f"[\033[31mError\033[0m] Invalid t_idxs format: {t_idxs}")
+        t_starts, t_stops = map(to_numpy, t_idxs)
+    else:
+        t_starts, t_stops = None, None
 
     valid_mask = (np.isfinite(f_starts) & np.isfinite(f_stops))
+    if t_starts is not None and t_stops is not None:
+        valid_mask &= np.isfinite(t_starts) & np.isfinite(t_stops)
     if normalized:
         valid_mask &= (f_starts >= 0) & (f_starts <= 1) & (f_stops >= 0) & (f_stops <= 1)
+        if t_starts is not None and t_stops is not None:
+            valid_mask &= (t_starts >= 0) & (t_starts <= 1) & (t_stops >= 0) & (t_stops <= 1)
     else:
         valid_mask &= (f_starts >= 0) & (f_starts < len(freqs)) & (f_stops >= 0) & (f_stops < len(freqs))
 
     classes, f_starts, f_stops = classes[valid_mask], f_starts[valid_mask], f_stops[valid_mask]
+    if t_starts is not None and t_stops is not None:
+        t_starts, t_stops = t_starts[valid_mask], t_stops[valid_mask]
     classes = classes.astype(int)
     if len(classes) == 0:
         print(f"[\033[33mWarn\033[0m] No valid frequency lines in generated boxes.")
@@ -265,10 +279,14 @@ def plot_F_lines(ax, freqs, pred_boxes, normalized=True, snrs=None, color=['red'
     if color is None or not isinstance(color, (list, tuple)):
         raise ValueError("[\033[31mError\033[0m] `color` must be a list of color strings.")
     if len(color) <= max_class_id:
-        raise ValueError(
-            f"[\033[31mError\033[0m] Not enough colors: need {max_class_id + 1}, got {len(color)}. "
-            f"Class IDs present: {np.unique(classes).tolist()}"
-        )
+        if draw == 'line' or draw is None:
+            for i in range(len(color)):
+                color.append(color[0])
+        else:
+            raise ValueError(
+                f"[\033[31mError\033[0m] Not enough colors: need {max_class_id + 1}, got {len(color)}. "
+                f"Class IDs present: {np.unique(classes).tolist()}"
+            )
     colors = list(color)
 
     if normalized:
@@ -282,12 +300,40 @@ def plot_F_lines(ax, freqs, pred_boxes, normalized=True, snrs=None, color=['red'
     start_idx = np.clip(start_idx, 0, len(freqs) - 1)
     stop_idx = np.clip(stop_idx, 0, len(freqs) - 1)
 
+    if draw not in {'box', 'line', None}:
+        raise ValueError(f"[\033[31mError\033[0m] Unsupported draw mode: {draw}")
+
+    if draw == 'line':
+        y_min, y_max = ax.get_ylim()
+        y0, y1 = min(y_min, y_max), max(y_min, y_max)
+        y_text = y0 + 0.08 * (y1 - y0)
+        if t_starts is not None and t_stops is not None:
+            if normalized:
+                y_starts = y0 + t_starts * (y1 - y0)
+                y_stops = y0 + t_stops * (y1 - y0)
+            else:
+                y_starts = t_starts
+                y_stops = t_stops
+        else:
+            y_starts = np.full(len(start_idx), y0, dtype=np.float32)
+            y_stops = np.full(len(stop_idx), y1, dtype=np.float32)
+
     for i, (cls, s_idx, e_idx) in enumerate(zip(classes, start_idx, stop_idx)):
         col = colors[cls]
-        ax.axvline(freqs[s_idx], color=col, linestyle=linestyle, linewidth=linewidth, alpha=0.8)
-        ax.axvline(freqs[e_idx], color=col, linestyle=linestyle, linewidth=linewidth, alpha=0.8)
+        if draw == 'line':
+            ax.plot([freqs[s_idx], freqs[e_idx]], [y_starts[i], y_stops[i]], color=col, linestyle=linestyle,
+                    linewidth=linewidth,
+                    alpha=0.8)
+        elif draw == 'box':
+            ax.axvline(freqs[s_idx], color=col, linestyle=linestyle, linewidth=linewidth, alpha=0.8)
+            ax.axvline(freqs[e_idx], color=col, linestyle=linestyle, linewidth=linewidth, alpha=0.8)
+
         if snrs is not None:
-            y_min, y_max = ax.get_ylim()
-            ax.text(freqs[s_idx], y_max * 0.1, round(get_snr(i), 2), ha='center', va='bottom',
+            if draw == 'line':
+                text_y = y_text
+            else:
+                _, y_max = ax.get_ylim()
+                text_y = y_max * 0.1
+            ax.text(freqs[s_idx], text_y, round(get_snr(i), 2), ha='center', va='bottom',
                     fontsize=22 if Settings.PROD else 12, color='black',
                     bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))

@@ -8,11 +8,14 @@ __pycache__/
 # resources
 checkpoints/*/*.pth
 checkpoints/*/*/*.pth
+checkpoints/*/*/*/*.pth
 *.png
 *.pdf
 *.h5
 *.csv
 *.fil
+*.2C
+*.2CL
 *.log
 *.dat
 

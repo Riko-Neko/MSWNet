@@ -3,6 +3,9 @@ import random
 import sys
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 import numpy as np
 import torch
 from blimpy import Waterfall
@@ -11,11 +14,49 @@ from scipy.stats import truncnorm
 from torch.utils.data import Dataset
 
 from gen.SETIgen import sim_dynamic_spec_seti
+from utils.CE4_utils import CE4Waterfall
 from utils.det_utils import plot_F_lines
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+from config.configs import load_config
 from config.settings import Settings
+
+PATH_TYPE_ACTIVITY_PARAMS = {
+    "FAST": {
+        "sine_period_scale": (0.25, 0.75),
+        "sine_amplitude_scale": (0.01, 0.03),
+        "sine_drift_rate_scale": (1.0, 1.5),
+        "rfi_spread_scale": (0.005, 0.05),
+        "squared_constant_drift_threshold": 0.1,
+        "squared_drift_rate_scale": 5.0e-4,
+    },
+    "CE4": {
+        "sine_period_scale": (0.01, 0.05),
+        "sine_amplitude_scale": (10, 50),
+        "sine_drift_rate_scale": (0.5, 1.0),
+        "rfi_spread_scale": (0.01, 0.1),
+        "squared_constant_drift_threshold": 20.0,
+        "squared_drift_rate_scale": 5.0e-3,
+    },
+}
+
+TIME_PROFILE_ACTIVITY_PARAMS = {
+    "FAST": {
+        "pulse_width_scale": (1.0, 100.0),
+        "pulse_amplitude_factor": (0.1, 1.0),
+        "pulse_num": (1, 5),
+        "pulse_min_level_factor": (0.1, 1.0),
+        "sine_period_scale": (0.1, 1.0),
+        "sine_amplitude_factor": (0.01, 1.0),
+    },
+    "CE4": {
+        "pulse_width_scale": (1.0, 30.0),
+        "pulse_amplitude_factor": (0.3, 1.0),
+        "pulse_num": (1, 3),
+        "pulse_min_level_factor": (0.5, 1.0),
+        "sine_period_scale": (0.3, 1.5),
+        "sine_amplitude_factor": (0.1, 1.0),
+    },
+}
 
 
 class DynamicSpectrumDataset(Dataset):
@@ -86,6 +127,9 @@ class DynamicSpectrumDataset(Dataset):
     def __getitem__(self, idx):
         fixed_path = ['sine', 'constant']
         FIXED = False
+        activity_mode = "CE4" if Settings.WORKFLOW == "CE4" else "FAST"
+        path_activity = PATH_TYPE_ACTIVITY_PARAMS[activity_mode]
+        time_activity = TIME_PROFILE_ACTIVITY_PARAMS[activity_mode]
         # 随机生成信号列表
         n_signals = random.randint(self.num_signals[0], self.num_signals[1])
         if np.random.random() < 0.3:
@@ -107,8 +151,12 @@ class DynamicSpectrumDataset(Dataset):
         signals = []
         for i in range(n_signals):
             # 随机路径类型
-            path_type = random.choices(['constant', 'sine', 'squared', 'rfi'],
-                                       weights=[0.6, 0., 0.4, 0.])[0]
+            if Settings.WORKFLOW == "CE4":
+                path_type = random.choices(['constant', 'sine', 'squared', 'rfi'],
+                                           weights=[0.7, 0.3, 0., 0.])[0]
+            else:
+                path_type = random.choices(['constant', 'sine', 'squared', 'rfi'],
+                                           weights=[0.6, 0., 0.4, 0.])[0]
             if FIXED:
                 path_type = fixed_path[i]
 
@@ -149,11 +197,9 @@ class DynamicSpectrumDataset(Dataset):
                 'width': width,
                 'path': path_type,
                 't_profile': random.choices(
-                    ['pulse', 'sine', 'constant'], weights=[0.3, 0.2, 0.5], k=1)[0],
+                    ['pulse', 'sine', 'constant'], weights=[0.2, 0.3, 0.5], k=1)[0],
                 'f_profile': random.choices(
-                    ['gaussian', 'box', 'sinc', 'lorentzian', 'voigt'],
-                    weights=[0.3, 0.2, 0.2, 0.15, 0.15],
-                    k=1)[0],
+                    ['gaussian', 'box', 'sinc', 'lorentzian', 'voigt'], weights=[0.3, 0.2, 0.2, 0.15, 0.15], k=1)[0],
                 # rfi 相关参数
                 'rfi_type': random.choice(['stationary', 'random_walk']),
                 'spread_type': random.choice(['uniform', 'normal']),
@@ -163,29 +209,38 @@ class DynamicSpectrumDataset(Dataset):
 
             # 路径类型特定参数
             if path_type == 'sine':
-                sig['period'] = random.uniform(0.25 * self.total_time, 0.75 * self.total_time)
-                sig['amplitude'] = random.uniform(0.01 * self.total_bandwidth,
-                                                  0.03 * self.total_bandwidth) * random.choice([1, -1])
-                sig['drift_rate'] = random.uniform(1, 1.5) * drift_rate
+                sig['period'] = random.uniform(path_activity['sine_period_scale'][0] * self.total_time,
+                                               path_activity['sine_period_scale'][1] * self.total_time)
+                sig['amplitude'] = random.uniform(path_activity['sine_amplitude_scale'][0] * self.total_bandwidth,
+                                                  path_activity['sine_amplitude_scale'][
+                                                      1] * self.total_bandwidth) * random.choice([1, -1])
+                sig['drift_rate'] = random.uniform(path_activity['sine_drift_rate_scale'][0],
+                                                   path_activity['sine_drift_rate_scale'][1]) * drift_rate
             elif path_type == 'rfi':
-                sig['spread'] = random.uniform(0.005 * self.total_bandwidth, 0.05 * self.total_bandwidth)
+                sig['spread'] = random.uniform(path_activity['rfi_spread_scale'][0] * self.total_bandwidth,
+                                               path_activity['rfi_spread_scale'][1] * self.total_bandwidth)
                 sig['spread_type'] = random.choice(['uniform', 'normal'])
                 sig['rfi_type'] = random.choice(['stationary', 'random_walk'])
             elif path_type == 'squared':
-                if abs(drift_rate) < 0.1:
+                if abs(drift_rate) < path_activity['squared_constant_drift_threshold']:
                     sig['path'] = 'constant'
                 else:
-                    sig['drift_rate'] = drift_rate * 5.e-4
+                    sig['drift_rate'] = drift_rate * path_activity['squared_drift_rate_scale']
 
             # 时间调制类型参数
             if sig['t_profile'] == 'pulse':
-                sig['p_width'] = random.uniform(self.total_time, 100 * self.total_time)
-                sig['p_amplitude_factor'] = random.uniform(0.1, 1.0)
-                sig['p_num'] = random.randint(1, 5)
-                sig['p_min_level_factor'] = random.uniform(0.1, 1.0)
+                sig['p_width'] = random.uniform(time_activity['pulse_width_scale'][0] * self.total_time,
+                                                time_activity['pulse_width_scale'][1] * self.total_time)
+                sig['p_amplitude_factor'] = random.uniform(time_activity['pulse_amplitude_factor'][0],
+                                                           time_activity['pulse_amplitude_factor'][1])
+                sig['p_num'] = random.randint(time_activity['pulse_num'][0], time_activity['pulse_num'][1])
+                sig['p_min_level_factor'] = random.uniform(time_activity['pulse_min_level_factor'][0],
+                                                           time_activity['pulse_min_level_factor'][1])
             elif sig['t_profile'] == 'sine':
-                sig['s_period'] = random.uniform(0.1 * self.total_time, 1 * self.total_time)
-                sig['s_amplitude_factor'] = random.uniform(0.01, 1.0)
+                sig['s_period'] = random.uniform(time_activity['sine_period_scale'][0] * self.total_time,
+                                                 time_activity['sine_period_scale'][1] * self.total_time)
+                sig['s_amplitude_factor'] = random.uniform(time_activity['sine_amplitude_factor'][0],
+                                                           time_activity['sine_amplitude_factor'][1])
 
             signals.append(sig)
 
@@ -322,16 +377,33 @@ def split_waterfall_generator(waterfall_fn, fchans, tchans=None, f_shift=None):
         If int -> fixed shift. If tuple/list -> random shift in [low, high].
         Default = fchans (no overlap).
     """
-    if isinstance(waterfall_fn, str):
+    if isinstance(waterfall_fn, (str, Path)):
         waterfall_fn = [waterfall_fn]
+    waterfall_fn = [str(fn) for fn in waterfall_fn if Path(fn).exists()]
+    if not waterfall_fn:
+        raise FileNotFoundError("[\033[31mError\033[0m] No valid background waterfall files found.")
+
+    def get_step():
+        if f_shift is None:
+            return fchans
+        if isinstance(f_shift, (tuple, list)) and len(f_shift) == 2:
+            return random.randint(f_shift[0], f_shift[1])
+        return int(f_shift)
+
+    def open_background_waterfall(fn, **kwargs):
+        if Settings.WORKFLOW == "CE4" and Path(fn).suffix.lower() == ".2c":
+            return CE4Waterfall(fn, **kwargs)
+        return Waterfall(fn, **kwargs)
 
     while True:
+        yielded_any = False
         for fn in waterfall_fn:
-            info = Waterfall(fn, load_data=False)
+            is_ce4_background = Settings.WORKFLOW == "CE4" and Path(fn).suffix.lower() == ".2c"
+            info = open_background_waterfall(fn, load_data=False)
             fch1 = info.header['fch1']
             nchans = info.header['nchans']
             df = info.header['foff']
-            total_t = info.container.selection_shape[0]
+            total_t = info.selection_shape[0] if hasattr(info, "selection_shape") else info.container.selection_shape[0]
 
             if tchans is None:
                 t_keep = total_t
@@ -342,26 +414,43 @@ def split_waterfall_generator(waterfall_fn, fchans, tchans=None, f_shift=None):
             else:
                 t_keep = tchans
 
-            # 初始窗口
-            f_start, f_stop = fch1, fch1 + fchans * df
+            if is_ce4_background:
+                freqs = info.get_freqs()
+                start_idx = 0
+                while start_idx + fchans <= nchans:
+                    stop_idx = start_idx + fchans - 1
+                    wf = open_background_waterfall(fn, f_start=float(freqs[start_idx]),
+                                                   f_stop=float(freqs[stop_idx]), t_start=0, t_stop=t_keep)
+                    if wf.selection_shape[2] != fchans:
+                        start_idx += get_step()
+                        continue
+                    _, patch_data = wf.grab_data()
+                    patch_std = np.std(patch_data)
+                    if not np.isfinite(patch_std) or patch_std <= 0:
+                        if Settings.DEBUG:
+                            print(f"[\033[33mWarn\033[0m] Skip flat CE4 background patch: {fn}")
+                        start_idx += get_step()
+                        continue
+                    yielded_any = True
+                    yield wf
+                    start_idx += get_step()
+            else:
+                # 初始窗口
+                f_start, f_stop = fch1, fch1 + fchans * df
 
-            # 遍历直到剩余不够 fchans
-            while np.abs(f_stop - fch1) <= np.abs(nchans * df):
-                fmin, fmax = np.sort([f_start, f_stop])
-                wf = Waterfall(fn, f_start=fmin, f_stop=fmax,
-                               t_start=0, t_stop=t_keep)
-                yield wf
+                # 遍历直到剩余不够 fchans
+                while np.abs(f_stop - fch1) <= np.abs(nchans * df):
+                    fmin, fmax = np.sort([f_start, f_stop])
+                    wf = open_background_waterfall(fn, f_start=fmin, f_stop=fmax,
+                                                   t_start=0, t_stop=t_keep)
+                    yielded_any = True
+                    yield wf
 
-                # 计算 shift
-                if f_shift is None:
-                    step = fchans
-                elif isinstance(f_shift, (tuple, list)) and len(f_shift) == 2:
-                    step = random.randint(f_shift[0], f_shift[1])
-                else:
-                    step = int(f_shift)
-
-                f_start += step * df
-                f_stop += step * df
+                    step = get_step()
+                    f_start += step * df
+                    f_stop += step * df
+        if not yielded_any:
+            raise ValueError("[\033[31mError\033[0m] No usable background waterfall patches found.")
 
 
 def plot_samples(dataset, kind='clean', num=10, out_dir=None, with_spectrum=False, spectrum_type='mean'):
@@ -381,11 +470,15 @@ def plot_samples(dataset, kind='clean', num=10, out_dir=None, with_spectrum=Fals
     assert spectrum_type in ['mean', 'middle', 'peak', 'fft2d'], f"Invalid spectrum type: {kind}"
 
     if out_dir is None:
-        out_dir = {
-            'clean': '../plot/sim',
-            'noisy': '../plot/no',
-            'mask': '../plot/rfi'
+        out_dir = ROOT / {
+            'clean': 'plot/sim',
+            'noisy': 'plot/no',
+            'mask': 'plot/rfi'
         }[kind]
+    else:
+        out_dir = Path(out_dir)
+        if not out_dir.is_absolute():
+            out_dir = ROOT / out_dir
     os.makedirs(out_dir, exist_ok=True)
 
     for i in range(num):
@@ -478,29 +571,49 @@ def plot_samples(dataset, kind='clean', num=10, out_dir=None, with_spectrum=Fals
                 plot_F_lines(ax, freqs, freq_info, normalized=False)
 
         plt.tight_layout()
-        save_path = os.path.join(out_dir, f"{kind}_{i:03d}.png")
+        save_path = out_dir / f"{kind}_{i:03d}.png"
         plt.savefig(save_path)
         print(f"Saved to {save_path}")
         plt.close()
 
 
 if __name__ == "__main__":
-    tchans = 116
-    fchans = 256
-    df = 7.450580597
-    dt = 10.200547328
-    drift_min = -4.0  # for fchans 1024
-    drift_max = 4.0
-    drift_min_abs = df // (tchans * dt)
-    dataset = DynamicSpectrumDataset(mode='test', tchans=tchans, fchans=fchans, df=df, dt=dt, fch1=None, ascending=True,
-                                     drift_min=drift_min, drift_max=drift_max, drift_min_abs=drift_min_abs,
-                                     snr_min=30.0, snr_max=50.0, width_min=7.5, width_max=20, num_signals=(1, 1),
-                                     noise_std_min=0.025, noise_std_max=0.05, noise_mean_min=2, noise_mean_max=3,
-                                     noise_type='chi2', use_fil=True,
-                                     background_fil="../data/33exoplanets/xx/Kepler-438_M01_pol1_f1140.50-1140.70.fil")
+    _config = load_config()
+
+    tchans = _config["tchans"]
+    fchans = _config["fchans"]
+    df = _config["df"]
+    dt = _config["dt"]
+    fch1 = _config["fch1"]
+    ascending = _config["ascending"]
+    drift_min = _config["drift_min"]
+    drift_max = _config["drift_max"]
+    drift_min_abs = _config["drift_min_abs"]
+    snr_min = _config["snr_min"]
+    snr_max = _config["snr_max"]
+    width_min = _config["width_min"]
+    width_max = _config["width_max"]
+    num_signals = _config["num_signals"]
+    noise_std_min = _config["noise_std_min"]
+    noise_std_max = _config["noise_std_max"]
+    noise_mean_min = _config["noise_mean_min"]
+    noise_mean_max = _config["noise_mean_max"]
+    noise_type = _config["nosie_type"]
+    rfi_enhance = _config["rfi_enhance"]
+    use_fil = _config["use_fil"]
+    background_fil = _config["background_fil"]
+
+    dataset = DynamicSpectrumDataset(mode='test', tchans=tchans, fchans=fchans, df=df, dt=dt, fch1=fch1,
+                                     ascending=ascending, drift_min=drift_min, drift_max=drift_max,
+                                     drift_min_abs=drift_min_abs, snr_min=snr_min, snr_max=snr_max,
+                                     width_min=width_min, width_max=width_max, num_signals=num_signals,
+                                     noise_std_min=noise_std_min, noise_std_max=noise_std_max,
+                                     noise_mean_min=noise_mean_min, noise_mean_max=noise_mean_max,
+                                     noise_type=noise_type, rfi_enhance=rfi_enhance, use_fil=use_fil,
+                                     background_fil=background_fil)
 
     """
-    参数生成 Refs:
+    Refs:
     tchans, fchans, df, dt: 128, 1024, 7.5, 10.0, experimental values 
         from arXiv:2502.20419v1 [astro-ph.IM] 27 Feb 2025 
     drift_rate: -1.0-1.0 Hz/s, the signal drift rate is generally small
@@ -512,6 +625,6 @@ if __name__ == "__main__":
         from arXiv:2502.20419v1 [astro-ph.IM] 27 Feb 2025
     """
 
-    plot_samples(dataset, kind='clean', num=1, with_spectrum=True, spectrum_type='peak')
-    plot_samples(dataset, kind='noisy', num=1, with_spectrum=True, spectrum_type='peak')
+    plot_samples(dataset, kind='clean', num=30, with_spectrum=True, spectrum_type='peak')
+    plot_samples(dataset, kind='noisy', num=10, with_spectrum=True, spectrum_type='peak')
     # plot_samples(dataset, kind='mask', num=30, with_spectrum=False)

@@ -33,9 +33,9 @@ flowchart LR
 
 ## Repository Scope
 
-- **The current mainline is the detection pipeline**. The default training entry is [`main.py`](main.py), and the default inference entry is [`pred.py`](pred.py).
+- **The mainline workflow is the detection pipeline**. The default training entry is [`main.py`](main.py), and the default inference entry is [`pred.py`](pred.py).
 - **The core model is public**. Relevant implementations can be found in [`model/DetMSWNet.py`](model/DetMSWNet.py), [`model/MSWNet.py`](model/MSWNet.py), and [`model/UNet.py`](model/UNet.py).
-- **The intended narrative is pipeline-first, not model-first**. Real use typically involves `data/`, `gen/`, `main.py`, `pred.py`, and `data_process/post_process/`.
+- **The repository is organized around the full pipeline rather than a single model component**. Real use typically involves `data/`, `gen/`, `main.py`, `pred.py`, and `data_process/post_process/`.
 - **Experimental and historical directories are not the stable path**. `dev/`, `old/`, `abandoned/`, and `archived/` are mainly for experiments or legacy code.
 
 ## Visual Examples
@@ -59,15 +59,16 @@ flowchart LR
 | Path | Purpose |
 | --- | --- |
 | `main.py` | Training entry point. Defaults to detection mode and supports checkpoint resume. |
-| `pred.py` | Inference entry point. Supports synthetic inference, observation inference, full pipeline mode, and dual-model comparison. |
+| `pred.py` | Inference entry point. Supports synthetic inference, observation inference, and full pipeline mode. |
+| `config/` | Runtime profile definitions and environment-selected configuration loading. |
 | `model/` | `MSWNet`, `DetMSWNet`, `UNet`, and detection-head implementations. |
 | `gen/` | `setigen`-based dynamic-spectrum generation and dataset logic. |
 | `pipeline/` | Observation patch extraction, pipeline processor, and UI renderer. |
 | `utils/` | Detection decoding, SNR estimation, losses, and training/inference helpers. |
-| `data/` | Filterbank download, inspection, and slicing scripts, plus sample data. |
+| `data/` | Filterbank / `.2C` inspection, download, and slicing utilities, plus local example layouts. |
 | `data_process/` | `turbo_seti` comparison scripts, post-processing, statistics, and visualization tools. |
 | `checkpoints/` | Saved weights and training logs. |
-| `pred_results/` | Output plots from synthetic inference or model comparison runs. |
+| `pred_results/` | Output plots from synthetic inference and saved example predictions. |
 | `plot/` | Figures used for examples and visualization. |
 
 ## Installation
@@ -89,7 +90,19 @@ pip install -r requirements.txt
 
 - `pred.py` imports `PyQt5` and `pipeline.renderer` at module import time, so **installing `PyQt5` is recommended even if you do not use `--ui`**.
 - `turbo-seti` is only needed for the scripts under `data_process/TruboSETI_*.py`; it is not required for the main detection pipeline.
-- The current codebase is more consistent with **Python 3.10+ and PyTorch 2.x** than with the older dependency notes from the original README.
+- Use **Python 3.10+ and PyTorch 2.x**.
+
+## Runtime Profiles
+
+Training and inference are now profile-driven rather than controlled by large blocks of hard-coded constants inside the entry scripts.
+
+- Runtime profiles are defined in [`config/configs.py`](config/configs.py).
+- The active profile is selected through the `CONFIG` environment variable.
+- If `CONFIG` is not set, the repository falls back to the default profile.
+
+The main public documentation below uses a short local profile named `quick_start`. It is intended as a compact public-facing example path for verifying the pipeline and synthetic workflow without exposing the longer internal observation-profile names in the README.
+
+An auxiliary CE4 branch is also available through dedicated profiles and `.2C` utilities, but it is treated as a side path. The main documentation below focuses on the standard pipeline built around synthetic generation, training, observation inference, and candidate post-processing.
 
 ## Data Conventions
 
@@ -97,27 +110,23 @@ pip install -r requirements.txt
 
 The main pipeline supports `.fil` and `.h5`.
 
-The default observation layout used by the repository is:
+Due to observation-side access and release requirements, this repository does **not** distribute real observation data such as FAST files. The repository is intended to provide the code, model implementations, pipeline logic, and synthetic testing path. Real observation files must be prepared separately by users who have the appropriate access and permissions.
+
+For a short public-facing local example path, this README refers to the example two-polarization layout as **Quick Start**. In user-managed local storage, that layout can be organized as:
 
 ```text
-data/
-  33exoplanets/
-    xx/
-      <target>_M01_pol1_*.fil
-      <target>_M02_pol1_*.fil
-      ...
-    yy/
-      <target>_M01_pol2_*.fil
-      <target>_M02_pol2_*.fil
-      ...
+data/<path-to-your-data>/xx/
+data/<path-to-your-data>/yy/
 ```
 
-When `ignore_polarization = True` in [`pred.py`](pred.py), the code matches files using:
+The expected file naming pattern is still:
 
 - the `Mxx` beam identifier
 - the `_pol1` / `_pol2` polarization suffix
 
-and combines the paired inputs into `Stokes I` by default.
+When polarization pairing is enabled by the selected profile, the pipeline matches the two directories by this naming convention and combines the paired inputs into `Stokes I` by default.
+
+As a side branch, the repository also supports CE4 `.2C` data through dedicated profiles and utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py). That path reuses the same pipeline concepts, but it is not the primary focus of this README.
 
 ### Synthetic Training Data
 
@@ -133,63 +142,65 @@ The current detection head performs **1D frequency-interval regression**, not 2D
 
 ### Real Background Mixing
 
-The default training configuration in [`main.py`](main.py) includes:
+Some profiles mix real `.fil` backgrounds into synthetic samples, while others keep the synthetic path fully self-contained.
 
-```python
-use_fil = True
-fil_folder = Path('./data/33exoplanets/bg/clean')
-```
+For example:
 
-This means training will try to mix real `.fil` backgrounds into synthetic samples.
+- observation-oriented profiles may reuse local filterbank directories as background sources
+- the `quick_start` profile disables real-background mixing so that the synthetic path can be tested without additional observation files
 
-If that directory does not exist or does not contain valid background files, you should either:
-
-- point `fil_folder` to your own background directory, or
-- set `use_fil = False`
-
-Otherwise the training dataset configuration will not match the intended setup.
+If you are building a new profile, background usage should be treated as a profile-level choice rather than a fixed repository-wide requirement.
 
 ## Quick Start
 
-### Synthetic Inference
+The quickest way to test the repository is to stay entirely in the **synthetic** path. The steps below are designed so that anyone can run inference and a small training smoke test **without any real `.fil` observation files**.
+
+For the public quick start, for example, place `mswnet-bin256-final.pth` from the `weights-v1` release under `checkpoints/<path-to-your-weights>/`, and place any local observation files under `data/<path-to-your-data>/`.
+
+The `quick_start` profile intentionally uses placeholder paths such as `checkpoints/<path-to-your-...>/` and `data/<path-to-your-data>/`, so update them to match your local layout before running.
+
+### Synthetic Quick Start Inference
 
 Run:
 
 ```bash
-python pred.py
+CONFIG=quick_start python pred.py
 ```
 
 By default this:
 
-- uses the detection configuration defined at the top of [`pred.py`](pred.py)
+- loads the `quick_start` runtime profile from [`config/configs.py`](config/configs.py)
 - generates synthetic inputs through `DynamicSpectrumDataset`
-- loads `checkpoints/mswunet/bin256/final.pth`
+- expects a compatible checkpoint path defined in the `quick_start` profile
 - writes plots to `pred_results/plots/MSWNet/`
 
-### Training
+### Synthetic Quick Start Training Smoke Test
+
+Run:
 
 ```bash
-python main.py -d 0
+CONFIG=quick_start python main.py -d 0
 ```
 
-Resume from the best saved weights:
+This uses the same short public validation profile and keeps the synthetic training path independent of external observation backgrounds.
+
+For a very short smoke test, shorten the training-loop length inside the selected profile in [`config/configs.py`](config/configs.py), then run the same command again.
+
+If you want to resume from saved best weights under the active profile:
 
 ```bash
-python main.py -d 0 -l
+CONFIG=quick_start python main.py -d 0 -l
 ```
 
-The main training configuration is hard-coded near the top of [`main.py`](main.py), not exposed through a full CLI. The default setup includes:
+### Local Observation Pipeline Validation
 
-- `mode = "detection"`
-- `fchans = 1024`
-- `checkpoint_dir = "./checkpoints/mswunet/bin1024"`
-- `freeze_backbone = True`
+```bash
+CONFIG=quick_start python pred.py --mode pipeline --verbose
+```
 
-So the current mainline behaves more like **detector-head training / fine-tuning on top of an existing backbone**.
+This uses the same short profile name for the local two-polarization observation layout. Before running it on observation files, update the `quick_start` profile paths to your local `data/<path-to-your-data>/xx/` and `data/<path-to-your-data>/yy/` layout.
 
 ## Inference Pipeline
-
-This is the most important part of the repository.
 
 ### Inference Modes
 
@@ -204,67 +215,39 @@ This is the most important part of the repository.
 
 ### Configuration You Usually Need to Edit First
 
-Most important pipeline controls are defined as top-level constants inside [`pred.py`](pred.py), not passed through CLI arguments.
+Most pipeline controls are now defined through runtime profiles in [`config/configs.py`](config/configs.py).
 
-Before running on real observations, check at least the following:
+Before running on real observations, review the active profile in four groups:
 
-#### Input and Polarization
+1. **Input layout**
+   - observation root path
+   - accepted suffixes such as `.fil`, `.h5`, or `.2C`
+   - polarization handling rules
+   - optional beam filtering
+2. **Patch geometry**
+   - time / frequency patch size
+   - overlap ratio
+   - adaptive time scaling behavior
+3. **Model compatibility**
+   - checkpoint path
+   - detector backend
+   - detector width and frequency resolution assumptions
+4. **Candidate filtering**
+   - NMS thresholds
+   - patch-level SNR gates
+   - drift / dedrift settings
 
-- `XX_dir`
-- `YY_dir`
-- `obs_file_path`
-- `ignore_polarization`
-- `stokes_mode`
-- `Beam`
-
-With the current defaults:
-
-- `ignore_polarization = True`
-- `stokes_mode = "I"`
-- `obs_file_path = [XX_dir, YY_dir]`
-
-the code pairs files from `xx/` and `yy/` directories by filename and beam ID, then processes them as polarization pairs.
-
-#### Patch Width and Model Width
-
-- `patch_f = 256`
-- `fchans = 256`
-- `dwtnet_ckpt = Path("./checkpoints/mswunet/bin256") / "final.pth"`
-- `detector_args["fchans"] = fchans`
-
-These values must stay consistent.
-
-If you switch from `256`-wide frequency patches to `1024`, you should also switch:
-
-- the checkpoint
-- `fchans`
-- `detector_args`
-
-Otherwise the detector head dimensions will no longer match the model weights.
-
-#### Thresholds and Post-Filtering
-
-- `nms_kargs["score_thresh"]`
-- `nms_kargs["iou_thresh"]`
-- `fsnr_args["fsnr_threshold"]`
-- `snr_threshold`
-- `pad_fraction`
-
-These directly affect:
-
-- whether a patch is considered positive
-- whether a hit is written to CSV / DAT
-- how candidate SNR is estimated
+These values are adjustable profile parameters. The main consistency rule is that patch width, detector width, and checkpoint selection must match each other.
 
 ### Patch Extraction Logic
 
 The full observation pipeline uses `SETIWaterFullDataset` from [`pipeline/patch_engine.py`](pipeline/patch_engine.py).
 
-Two practical details are important:
+Two implementation details are important:
 
 1. **The time axis is usually not split into multiple patches**
    - `SETIWaterFullDataset(..., t_adaptive=True)` adapts `patch_t` to the available observation length
-   - in practice this often means a single patch row across time, with sliding windows mainly along frequency
+   - this often means a single patch row across time, with sliding windows mainly along frequency
 2. **The frequency axis is processed by fixed-width sliding windows**
    - default `patch_f = 256`
    - default `overlap_pct = 0.02`
@@ -345,25 +328,34 @@ Also, when `--obs` is used with `ignore_polarization=True`, the current code onl
 
 ### Main Entry
 
-The training entry point is [`main.py`](main.py). The default stack is:
+The training entry point is [`main.py`](main.py). The main stack is:
 
 - dataset: `DynamicSpectrumDataset`
 - model: `model.DetMSWNet.MSWNet`
 - loss: `DetectionCombinedLoss`
 
-### Default Training Configuration
+### Training Configuration
 
-The current detection training defaults include:
+Training settings are loaded from the active runtime profile in [`config/configs.py`](config/configs.py).
 
-- `mode = "detection"`
-- `tchans = 116`
-- `fchans = 1024`
-- `batch_size = 16`
-- `num_epochs = 1000`
-- `steps_per_epoch = 200`
-- `lr = 0.001`
-- `checkpoint_dir = "./checkpoints/mswunet/bin1024"`
-- `freeze_backbone = True`
+Typical profile-level training fields include:
+
+- time / frequency resolution
+- synthetic signal range
+- batch size and loop length
+- optimizer and scheduler settings
+- checkpoint directory
+- detector width and output count
+- backbone-freezing strategy
+
+These values should be treated as editable run parameters rather than fixed recommendations.
+
+For backbone freezing:
+
+- `False` means joint optimization of backbone and detector
+- `True` means freezing the backbone and emphasizing detector-only optimization
+
+A practical training schedule is to use joint training earlier and switch to detector-focused fine-tuning later to further strengthen the detection module.
 
 ### Training Outputs
 
@@ -378,7 +370,7 @@ The code keeps rolling checkpoints and updates `best_model.pth` when validation 
 
 ### About the Mask Path
 
-The repository still contains mask / RFI-mask-related code, losses, and historical branches, but the **current public mainline is the detection pipeline**.
+The repository still contains mask / RFI-mask-related code, losses, and historical branches, but the default public workflow is the detection pipeline.
 
 If you want to use the mask path, you should verify:
 
@@ -404,17 +396,17 @@ python data/FILTERBANK_puller.py \
 ### Inspect a Filterbank
 
 ```bash
-python data/FILTERBANK_checker.py data/33exoplanets/xx/Kepler-438_M01_pol1_f1140.50-1140.70.fil
+python data/FILTERBANK_checker.py <your_filterbank_file.fil>
 ```
 
 ### Slice by Frequency Range
 
 ```bash
 python data/FILTERBANK_spiliter.py \
-  data/33exoplanets/xx/Kepler-438_M01_pol1.fil \
-  --f_start 1140.50 \
-  --f_stop 1140.70 \
-  --output_dir ./data/33exoplanets/xx
+  <your_filterbank_file.fil> \
+  --f_start <start_mhz> \
+  --f_stop <stop_mhz> \
+  --output_dir <output_dir>
 ```
 
 ## Post-Processing Workflow
@@ -427,8 +419,8 @@ One important practical detail:
 
 - `pred.py --mode pipeline` writes time-stamped `hits_*.csv`
 - scripts under `data_process/post_process/filter_workflow/` generally expect target- and beam-aware filenames such as:
-  - `Kepler-438_M01.csv`
-  - `Kepler-438_M02.csv`
+  - `<target>_M01.csv`
+  - `<target>_M02.csv`
 
 So there is currently **no one-shot script that automatically renames everything from `pipeline/log/` into the downstream post-processing layout**.
 
@@ -436,8 +428,8 @@ In practice you usually collect and rename the exported hit tables into somethin
 
 ```text
 data_process/post_process/filter_workflow/init/
-  Kepler-438_M01.csv
-  Kepler-438_M02.csv
+  <target>_M01.csv
+  <target>_M02.csv
   ...
 ```
 
@@ -486,27 +478,29 @@ The default logic is:
 - [`data_process/post_process/stats.py`](data_process/post_process/stats.py): grouped summary statistics
 - [`data_process/post_process/visual_val/`](data_process/post_process/visual_val/): post-processing visualizations
 
-## Existing Checkpoints and Outputs
+## Weight and Output Paths
 
-The repository already includes several useful weights and example outputs:
+The codebase uses the following local paths for checkpoints, exported figures, and runtime logs:
 
-- `checkpoints/mswunet/bin256/final.pth`
-- `checkpoints/mswunet/bin1024/best_model.pth`
-- `checkpoints/unet/best_model.pth`
+- `checkpoints/mswunet/bin256/`
+- `checkpoints/mswunet/bin1024/`
+- `checkpoints/unet/`
 - `pred_results/plots/MSWNet/`
 - `pred_results/plots/UNet/`
 - `pipeline/log/`
 
-Checkpoint width matters:
+Weight files such as `.pth` and runtime log outputs are local artifacts and may not be visible in a fresh clone.
 
-- `bin256` weights correspond to `fchans = 256` / `patch_f = 256`
-- `bin1024` weights correspond to `fchans = 1024`
+When choosing a checkpoint, width matching still matters:
+
+- checkpoints under `bin256/` should be matched with `fchans = 256` / `patch_f = 256`
+- checkpoints under `bin1024/` should be matched with `fchans = 1024`
 
 ## Practical Caveats
 
-1. Many important settings are not exposed through the CLI and must be edited in the script constants.
+1. Many important settings are profile-driven through `config/configs.py` rather than fully exposed through the CLI.
 2. `pred.py` currently expects `PyQt5` to be installed even if you do not use `--ui`.
-3. The default training setup expects real background files under `data/33exoplanets/bg/clean`; if that is not available, you need to change `use_fil` or `fil_folder`.
+3. Profiles that enable real-background mixing require matching local data sources; profiles such as `quick_start` avoid that dependency.
 4. Inference currently assumes `batch_size = 1`.
 5. Downstream post-processing depends on consistent CSV naming, so there is still a manual handoff between raw pipeline outputs and the post-processing workflow.
 6. Code under `dev/`, `old/`, `abandoned/`, and `archived/` should not be assumed to match the current mainline behavior.
@@ -528,4 +522,4 @@ If you want to cite the repository itself, you can currently use:
 }
 ```
 
-A paper-specific citation can be added later if needed.
+A paper-specific citation will be added once published.

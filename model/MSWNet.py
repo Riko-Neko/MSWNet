@@ -405,22 +405,23 @@ class UpConvBlock(nn.Module):
 
 
 class MSWNet(nn.Module):
-    def __init__(self, in_chans=1, dim=64, levels=[2, 4, 8, 16], wavelet_name='db4'):
+    def __init__(self, in_chans=1, dim=64, levels=[2, 4, 8, 16], wavelet_name='db4', extension_mode='reflect',
+                 fchans=1024, N=5, num_classes=2, feat_channels=64, dropout=0.0):
         super(MSWNet, self).__init__()
         self.level = 1  # Do not change DWT internal level!
         filters = [dim, dim * levels[0], dim * levels[1], dim * levels[2], dim * levels[3]]
 
         # DWT
-        self.dwt1 = DWT2D(J=self.level, wave=wavelet_name, mode='periodization')  # 必须使用Periodization模式(防止像素扩张)
-        self.dwt2 = DWT2D(J=self.level, wave=wavelet_name, mode='periodization')
-        self.dwt3 = DWT2D(J=self.level, wave=wavelet_name, mode='periodization')
-        self.dwt4 = DWT2D(J=self.level, wave=wavelet_name, mode='periodization')
+        self.dwt1 = DWT2D(J=self.level, wave=wavelet_name, mode=extension_mode)  # 使用Periodization模式(防止像素扩张)
+        self.dwt2 = DWT2D(J=self.level, wave=wavelet_name, mode=extension_mode)
+        self.dwt3 = DWT2D(J=self.level, wave=wavelet_name, mode=extension_mode)
+        self.dwt4 = DWT2D(J=self.level, wave=wavelet_name, mode=extension_mode)
 
         # IDWT
-        self.idwt1 = IDWT2D(wave=wavelet_name, mode='periodization')
-        self.idwt2 = IDWT2D(wave=wavelet_name, mode='periodization')
-        self.idwt3 = IDWT2D(wave=wavelet_name, mode='periodization')
-        self.idwt4 = IDWT2D(wave=wavelet_name, mode='periodization')
+        self.idwt1 = IDWT2D(wave=wavelet_name, mode=extension_mode)
+        self.idwt2 = IDWT2D(wave=wavelet_name, mode=extension_mode)
+        self.idwt3 = IDWT2D(wave=wavelet_name, mode=extension_mode)
+        self.idwt4 = IDWT2D(wave=wavelet_name, mode=extension_mode)
 
         # Encoder
         self.enc1 = ResBlock(in_chans, filters[0], kernel_size=3)
@@ -444,40 +445,9 @@ class MSWNet(nn.Module):
         self.dec2_c = UpConvBlock(filters[1], filters[0])
         self.dec1_c = UpConvBlock(filters[0], filters[0])
 
-        # Denoising分支
         self.deno_out = nn.Conv2d(filters[0], in_chans, kernel_size=1)
 
-    def _pad_TF(self, x):
-        """
-        Pad the time dimension (T) and frequency dimension (F) to the nearest power of 2
-        x: [B, C, T, F]
-        return: (x_padded, orig_t, orig_f)
-        """
-        orig_t, orig_f = x.shape[2], x.shape[3]
-
-        # Nearest power of 2
-        target_t = 1 << (orig_t - 1).bit_length()
-        target_f = 1 << (orig_f - 1).bit_length()
-        pad_t = target_t - orig_t
-        pad_f = target_f - orig_f
-        if pad_t > 0 or pad_f > 0:
-            # F.pad order is (left, right, top, bottom, front, back, ...)
-            # Here padding (F axis, T axis)
-            x = F.pad(x, (0, pad_f, 0, pad_t), mode="reflect")
-
-        return x, orig_t, orig_f
-
-    def _re_TF(self, x, orig_t, orig_f):
-        """
-        Restore to the original T and F
-        x: [B, C, T, F]
-        """
-        return x[:, :, :orig_t, :orig_f]
-
     def forward(self, x):
-        # orig_t, orig_f = x.size(1), x.size(2)
-        x, orig_t, orig_f = self._pad_TF(x)
-
         lls = []
         Hs = []
 
@@ -506,34 +476,40 @@ class MSWNet(nn.Module):
         bn = self.bottleneck(ll)  # (B, 8D, H//16, W//16)
 
         # Denoising Branch Decoder (With Skip Connections)
-        assert bn.shape == lls[-1].shape, f"features must match ll_-1. ({bn.shape} != {lls[-1].shape})"
+        bn = self._interp_if(bn, lls[-1])
         d4 = torch.cat([bn, lls[-1]], dim=1)  # (B, 16D, H//16, W//16)
         d4 = self.dec4(d4)  # (B, 8D, H//16, W//16)
         d4 = self.idwt4([d4, Hs[-1]])  # (B, 8D, H//8, W//8)
         d4 = self.dec4_c(d4)  # (B, 4D, H//8, W//8)
 
-        assert d4.shape == lls[-2].shape, f"features must match ll_-2. ({d4.shape} != {lls[-2].shape})"
+        d4 = self._interp_if(d4, lls[-2])
         d3 = torch.cat([d4, lls[-2]], dim=1)  # (B, 8D, H//8, W//8)
         d3 = self.dec3(d3)  # (B, 4D, H//8, W//8)
         d3 = self.idwt3([d3, Hs[-2]])  # (B, 4D, H//4, W//4)
         d3 = self.dec3_c(d3)  # (B, 2D, H//4, W//4)
 
-        assert d3.shape == lls[-3].shape, f"features must match ll_-3. ({d3.shape} != {lls[-3].shape})"
+        d3 = self._interp_if(d3, lls[-3])
         d2 = torch.cat([d3, lls[-3]], dim=1)  # (B, 4D, H//4, W//4)
         d2 = self.dec2(d2)  # (B, 2D, H//4, W//4)
         d2 = self.idwt2([d2, Hs[-3]])  # (B, 2D, H//2, W//2)
         d2 = self.dec2_c(d2)  # (B, D, H//2, W//2)
 
-        assert d2.shape == lls[-4].shape, f"features must match ll_-4. ({d2.shape} != {lls[-4].shape})"
+        d2 = self._interp_if(d2, lls[-4])
         d1 = torch.cat([d2, lls[-4]], dim=1)  # (B, 2D, H//2, W//2)
         d1 = self.dec1(d1)  # (B, D, H//2, W//2)
         d1 = self.idwt1([d1, Hs[-4]])  # (B, D, H, W)
         ou = self.dec1_c(d1)  # (B, D, H, W)
 
-        deno = self._re_TF(self.deno_out(ou), orig_t, orig_f)  # (B, 1, H, W)
+        # deno = self._re_TF(self.deno_out(ou), orig_t, orig_f)  # (B, 1, H, W)
+        deno = self.deno_out(ou)  # (B, 1, H, W)
         # print(f" --- Denoised shape: {deno.shape} --- ")
 
         return deno
+
+    @staticmethod
+    def _interp_if(d, ll):
+        _, _, H, W = ll.shape
+        return F.interpolate(d, size=(H, W), mode="bilinear", align_corners=False)
 
 
 if __name__ == '__main__':

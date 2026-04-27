@@ -12,7 +12,8 @@ from utils.metrics_utils import execute_hits_hough, SNR_filter
 class SETIPipelineProcessor:
     def __init__(self, dataset, model, device, mode='mask', log_dir=Path("./pipeline/log"), verbose=False,
                  raw_output=False, drift=[-4.0, 4.0], snr_threshold=10.0, pad_fraction=0.2, min_abs_drift=0.05,
-                 iou_thresh=0.5, score_thresh=0.5, top_k=10, fsnr_threshold=300, top_fraction=0.002, min_pixels=50):
+                 iou_thresh=0.5, score_thresh=0.5, top_k=10, fsnr_threshold=300, top_fraction=0.002, min_pixels=50,
+                 detect_backend='regressor', trackline_detector=None):
         """
         Initialize the SETI pipeline processor with dataset and model
 
@@ -43,6 +44,8 @@ class SETIPipelineProcessor:
         self.model = model.to(device)
         self.device = device
         self.mode = mode
+        self.detect_backend = detect_backend
+        self.trackline_detector = trackline_detector
         self.snr_threshold = snr_threshold if not raw_output else 0.0
 
         # Grid dimensions
@@ -107,7 +110,15 @@ class SETIPipelineProcessor:
             except Exception as e:
                 self.logger.error(f"Failed to remove existing hits file: {e}")
 
-    def _process_detection_hits(self, raw_preds, freq_range, time_range, events_patch=None):
+    @staticmethod
+    def _score_to_confidence(score):
+        score = float(score)
+        if score <= 0:
+            return 0.0
+        return score / (1.0 + score)
+
+    def _process_detection_hits(self, raw_preds, freq_range, time_range, events_patch=None, mode='inner',
+                                tracks=None):
         """
         Process detection mode predictions to generate hits information
 
@@ -116,10 +127,89 @@ class SETIPipelineProcessor:
             freq_range: Frequency range tuple (min_freq, max_freq) in MHz
             time_range: Time range tuple (start_time, end_time) in seconds
             events_patch: Slice of events from the patch
+            mode: 'inner' for original regressor path, 'outer' for trackline path
+            tracks: TrackLine list for outer mode
 
         Returns:
             df_hits: DataFrame containing detection hits information
         """
+        if mode == 'outer':
+            if not tracks:
+                return pd.DataFrame()
+
+            hits = []
+            freq_min, freq_max = freq_range
+            time_start, time_end = time_range
+            patch_duration = max(time_end - time_start, 0.0)
+            patch_to_slice = None
+            if events_patch is not None:
+                try:
+                    if isinstance(events_patch, torch.Tensor):
+                        patch_to_slice = events_patch.detach().float()
+                    else:
+                        patch_to_slice = torch.as_tensor(events_patch, dtype=torch.float32)
+                    if patch_to_slice.ndim == 3:
+                        patch_to_slice = patch_to_slice[0]
+                    if patch_to_slice.ndim != 2:
+                        raise ValueError(
+                            f"[\033[31mError\033[0m] input_patch must be 2D after squeeze, got {tuple(patch_to_slice.shape)}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to prepare input patch for trackline SNR estimation: {e}")
+                    patch_to_slice = None
+
+            f_scale = max(self.dataset.patch_f - 1, 1)
+            t_scale = max(self.dataset.patch_t - 1, 1)
+            freq_span = freq_max - freq_min
+
+            for track in tracks:
+                f_start_norm = float(track.f_start / f_scale)
+                f_stop_norm = float(track.f_end / f_scale)
+                if self.ascending:
+                    f_start = freq_min + freq_span * f_start_norm
+                    f_stop = freq_min + freq_span * f_stop_norm
+                else:
+                    f_start = freq_max - freq_span * f_start_norm
+                    f_stop = freq_max - freq_span * f_stop_norm
+
+                t0 = float(track.t_start / t_scale)
+                t1 = float(track.t_end / t_scale)
+                abs_t0 = time_start + patch_duration * t0
+                abs_t1 = time_start + patch_duration * t1
+                line_duration = abs_t1 - abs_t0
+                freq_change_hz = (f_stop - f_start) * 1e6
+                drift_rate = freq_change_hz / line_duration if abs(line_duration) > 1e-12 else 0.0
+                relative_drift_rate = -drift_rate if not self.ascending else drift_rate
+                uncorr_freq = f_start
+                snr_val = 0.0
+                if patch_to_slice is not None:
+                    try:
+                        roi, _, _, _, _ = extract_F_slice(patch_to_slice, f_start_norm, f_stop_norm,
+                                                          pad_fraction=self.pad_fraction)
+                        snr_val = SNR_filter(roi, mode="dedrift_peak", drift_hz_per_s=relative_drift_rate,
+                                             df_hz=self.foff, dt_s=self.tsamp)
+                    except Exception as e:
+                        self.logger.warning(f"Failed to estimate SNR for trackline detection: {e}")
+                        snr_val = 0.0
+                if self.snr_threshold is not None and self.snr_threshold > 0 and snr_val < self.snr_threshold:
+                    continue
+
+                hits.append({
+                    'DriftRate': drift_rate,
+                    'SNR': snr_val,
+                    'Uncorrected_Frequency': uncorr_freq,
+                    'freq_start': min(f_start, f_stop),
+                    'freq_end': max(f_start, f_stop),
+                    'confidence': self._score_to_confidence(track.score),
+                    'Score': float(track.score),
+                    'RMSE': float(track.rmse),
+                    'NPoints': int(track.n_points),
+                })
+
+            if not hits:
+                return pd.DataFrame()
+
+            return pd.DataFrame(hits)
+
         # Decode predictions
         det_outs = decode_F(raw_preds, iou_thresh=self.nms_iou_thresh, score_thresh=self.nms_score_thresh)  # dict
         if det_outs["f_start"].shape[1] == 0:
@@ -223,42 +313,62 @@ class SETIPipelineProcessor:
             outputs = self.model(patch_data)
 
             if self.mode == 'detection':
-                # Detection mode: denoised, regs_dict
-                if len(outputs) == 2:
-                    denoised, regs_dict = outputs
+                if self.detect_backend == 'trackline':
+                    if isinstance(outputs, (tuple, list)):
+                        denoised = outputs[0]
+                    else:
+                        denoised = outputs
+                    try:
+                        patch_snr = SNR_filter(denoised.squeeze(), mode="global_topk", top_fraction=self.top_fraction,
+                                               min_pixels=self.min_pixels)
+                    except Exception:
+                        patch_snr = 0.0
+
+                    denoised_np = denoised.squeeze().detach().cpu().numpy()
+                    tracks = self.trackline_detector.detect(denoised_np) if self.trackline_detector is not None else []
+                    df_hits_candidate = pd.DataFrame()
+                    if tracks:
+                        df_hits_candidate = self._process_detection_hits(
+                            None, freq_range, time_range, events_patch=raw_patch, mode='outer', tracks=tracks)
+                    confidence = float(df_hits_candidate['confidence'].max()) if not df_hits_candidate.empty and 'confidence' in df_hits_candidate.columns else 0.0
+                    status = (confidence >= self.nms_score_thresh) and (patch_snr >= self.fSNR_threshold)
+                    df_hits = df_hits_candidate if status else pd.DataFrame()
                 else:
-                    # Handle case where model returns different number of outputs
-                    denoised = outputs[0]
-                    regs_dict = outputs[1] if len(outputs) > 1 else None
+                    # Detection mode: denoised, regs_dict
+                    if len(outputs) == 2:
+                        denoised, regs_dict = outputs
+                    else:
+                        # Handle case where model returns different number of outputs
+                        denoised = outputs[0]
+                        regs_dict = outputs[1] if len(outputs) > 1 else None
 
-                try:
-                    patch_snr = SNR_filter(denoised.squeeze(), mode="global_topk", top_fraction=self.top_fraction,
-                                           min_pixels=self.min_pixels)
-                except Exception:
-                    patch_snr = 0.0
+                    try:
+                        patch_snr = SNR_filter(denoised.squeeze(), mode="global_topk", top_fraction=self.top_fraction,
+                                               min_pixels=self.min_pixels)
+                    except Exception:
+                        patch_snr = 0.0
 
-                # Use maximum detection confidence as patch confidence
-                confidence = 0.0
-                if regs_dict is not None:
-                    # Extract confidence scores from raw predictions
-                    # Decode predictions
-                    det_outs = decode_F(regs_dict, iou_thresh=self.nms_iou_thresh,
-                                        score_thresh=self.nms_score_thresh)  # dict
-                    confidences = det_outs["confidence"][0].cpu()
-                    if det_outs:
-                        confidence = confidences.max().item() if confidences.numel() > 0 else 0.0
+                    # Use maximum detection confidence as patch confidence
+                    confidence = 0.0
+                    if regs_dict is not None:
+                        # Extract confidence scores from raw predictions
+                        # Decode predictions
+                        det_outs = decode_F(regs_dict, iou_thresh=self.nms_iou_thresh,
+                                            score_thresh=self.nms_score_thresh)  # dict
+                        confidences = det_outs["confidence"][0].cpu()
+                        if det_outs:
+                            confidence = confidences.max().item() if confidences.numel() > 0 else 0.0
 
-                # Determine status based on confidence
-                if (confidence >= self.nms_score_thresh) and (patch_snr >= self.fSNR_threshold):
-                    status = True
-                else:
-                    status = False
+                    # Determine status based on confidence
+                    if (confidence >= self.nms_score_thresh) and (patch_snr >= self.fSNR_threshold):
+                        status = True
+                    else:
+                        status = False
 
-                # Process detections to generate hits
-                hits_info = None
-                df_hits = pd.DataFrame()
-                if status is True and regs_dict is not None:
-                    df_hits = self._process_detection_hits(regs_dict, freq_range, time_range, events_patch=raw_patch)
+                    # Process detections to generate hits
+                    df_hits = pd.DataFrame()
+                    if status is True and regs_dict is not None:
+                        df_hits = self._process_detection_hits(regs_dict, freq_range, time_range, events_patch=raw_patch)
 
             else:  # 'mask' mode as default
                 # Mask mode: denoised, mask, logits
@@ -303,11 +413,19 @@ class SETIPipelineProcessor:
                         if 'freq_end' in df_hits.columns:
                             df_hits['freq_end'] = freq_min - (df_hits['freq_end'] / 1e6)
 
-            # Prepare hits info for logging
-            hits_info = df_hits.to_string(index=False) if not df_hits.empty else "No hits detected."
+        # Prepare hits info for logging
+        hits_info = df_hits.to_string(index=False) if not df_hits.empty else "No hits detected."
+        log_metric_name = "Confidence"
+        log_metric_value = confidence
+        if self.mode == 'detection' and self.detect_backend == 'trackline':
+            log_metric_name = "Score"
+            if 'Score' in df_hits.columns and not df_hits.empty:
+                log_metric_value = float(df_hits['Score'].max())
+            else:
+                log_metric_value = 0.0
 
-            # Add hits to file if any detected
-            if not df_hits.empty:
+        # Add hits to file if any detected
+        if not df_hits.empty:
                 # Add additional columns
                 df_hits['cell_row'] = row
                 df_hits['cell_col'] = col
@@ -330,7 +448,7 @@ class SETIPipelineProcessor:
 
         # Log to file (and console if verbose)
         status_str = "Signal detected" if status is True else "No signal" if status is False else "Uncertain"
-        log_msg = f"Processed cell ({row}, {col}): {status_str} (Confidence: {confidence:.2f}, Global SNR: {patch_snr:.2f})\n"
+        log_msg = f"Processed cell ({row}, {col}): {status_str} ({log_metric_name}: {log_metric_value:.2f}, Global SNR: {patch_snr:.2f})\n"
         log_msg += f"Frequency: {freq_range[0]:.4f} - {freq_range[1]:.4f} MHz\n"
         log_msg += f"Time: {time_range[0]:.2f} - {time_range[1]:.2f} seconds\n"
         log_msg += f"Mode: {self.mode}"
@@ -349,15 +467,26 @@ class SETIPipelineProcessor:
                 f"[\033[35mML\033[0m] Found candidate in cell ({row}, {col}), frequency: {freq_range[0]:.4f} - {freq_range[1]:.4f} MHz")
             for idx, hit_row in df_hits.iterrows():
                 if self.mode == 'detection':
-                    print(
-                        f"[\033[36mHit\033[0m] Found signal {idx + 1}: "
-                        f"Class=\033[32m{hit_row['class_id']}\033[0m, "
-                        f"Confidence=\033[32m{hit_row['confidence']:.2f}\033[0m, "
-                        f"SNR=\033[32m{hit_row['SNR']:.2f}\033[0m, "
-                        f"DriftRate=\033[32m{hit_row['DriftRate']:.4f} Hz/s\033[0m, "
-                        f"Freq=\033[32m{hit_row['Uncorrected_Frequency']:.6f}\033[0m Mhz, "
-                        f"Range=[{hit_row['freq_start']:.6f}, {hit_row['freq_end']:.6f}] MHz"
-                    )
+                    if 'class_id' in hit_row.index:
+                        msg = (
+                            f"[\033[36mHit\033[0m] Found signal {idx + 1}: "
+                            f"Class=\033[32m{hit_row['class_id']}\033[0m, "
+                            f"Confidence=\033[32m{hit_row['confidence']:.2f}\033[0m, "
+                            f"SNR=\033[32m{hit_row['SNR']:.2f}\033[0m, "
+                            f"DriftRate=\033[32m{hit_row['DriftRate']:.4f} Hz/s\033[0m, "
+                            f"Freq=\033[32m{hit_row['Uncorrected_Frequency']:.6f}\033[0m Mhz, "
+                            f"Range=[{hit_row['freq_start']:.6f}, {hit_row['freq_end']:.6f}] MHz"
+                        )
+                    else:
+                        msg = (
+                            f"[\033[36mHit\033[0m] Found signal {idx + 1}: "
+                            f"Score=\033[32m{hit_row['Score']:.2f}\033[0m, "
+                            f"SNR=\033[32m{hit_row['SNR']:.2f}\033[0m, "
+                            f"DriftRate=\033[32m{hit_row['DriftRate']:.4f} Hz/s\033[0m, "
+                            f"Freq=\033[32m{hit_row['Uncorrected_Frequency']:.6f}\033[0m Mhz, "
+                            f"Range=[{hit_row['freq_start']:.6f}, {hit_row['freq_end']:.6f}] MHz"
+                        )
+                    print(msg)
                 else:  # 'mask' mode as default
                     print(
                         f"[\033[36mHit\033[0m] Found signal {idx + 1}: "
@@ -392,6 +521,8 @@ class SETIPipelineProcessor:
             df_all_hits = pd.read_csv(self.hits_file, sep='\t')
             if self.mode == 'mask' and 'SNR' in df_all_hits.columns:
                 df_sorted = df_all_hits.sort_values(by='SNR', ascending=False)
+            elif self.mode == 'detection' and self.detect_backend == 'trackline' and 'Score' in df_all_hits.columns:
+                df_sorted = df_all_hits.sort_values(by='Score', ascending=False)
             elif self.mode == 'detection' and 'confidence' in df_all_hits.columns:
                 df_sorted = df_all_hits.sort_values(by='confidence', ascending=False)
             else:

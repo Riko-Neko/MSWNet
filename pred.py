@@ -7,133 +7,99 @@ import torch
 from PyQt5.QtWidgets import QApplication
 from torch.utils.data import DataLoader
 
+from config.configs import load_config
+from config.settings import Settings
 from gen.SETIdataset import DynamicSpectrumDataset
-from model.DetMSWNet import MSWNet
+from model.DetMSWNet import MSWNet as DetMSWNet
+from model.MSWNet import MSWNet as DenoMSWNet
 from model.UNet import UNet
+from model.utils.TrackLine import TrackLineDetector
 from pipeline.patch_engine import SETIWaterFullDataset
 from pipeline.pipeline_processor import SETIPipelineProcessor
 from pipeline.renderer import SETIWaterfallRenderer
 from utils.pred_core import pred
 
-# Prediction modes
-pmode = "detection"
-# pmode = "mask"
+_config = load_config()
 
-# Data config
-patch_t = 116
-patch_f = 256
-overlap_pct = 0.02
-tchans = 116
-fchans = 256
-df = 7.450580597
-dt = 10.200547328
-fch1 = None
-ascending = True
-drift_min = -4.0
-drift_max = 4.0
-drift_min_abs = df // (tchans * dt)
-snr_min = 15
-snr_max = 35
-width_min = 10
-width_max = 30
-num_signals = (1, 1)
-noise_std_min = 0.025
-noise_std_max = 0.05
-noise_mean_min = 2
-noise_mean_max = 3
-nosie_type = "chi2"
-rfi_enhance = False
-use_fil = True
-fil_folder = Path('./data/33exoplanets')
-background_fil = list(fil_folder.rglob("*.fil"))
+pmode = _config["pmode"]
+patch_t = _config["patch_t"]
+patch_f = _config["patch_f"]
+overlap_pct = _config["overlap_pct"]
+t_adaptive = _config["t_adaptive"]
+adaptive_scale = _config["adaptive_scale"]
+tchans = _config["tchans"]
+fchans = _config["fchans"]
+df = _config["df"]
+dt = _config["dt"]
+fch1 = _config["fch1"]
+ascending = _config["ascending"]
+drift_min = _config["drift_min"]
+drift_max = _config["drift_max"]
+drift_min_abs = _config["drift_min_abs"]
+snr_min = _config["snr_min"]
+snr_max = _config["snr_max"]
+width_min = _config["width_min"]
+width_max = _config["width_max"]
+num_signals = _config["num_signals"]
+noise_std_min = _config["noise_std_min"]
+noise_std_max = _config["noise_std_max"]
+noise_mean_min = _config["noise_mean_min"]
+noise_mean_max = _config["noise_mean_max"]
+nosie_type = _config["nosie_type"]
+rfi_enhance = _config["rfi_enhance"]
+use_fil = _config["use_fil"]
+fil_folder = _config["fil_folder"]
+background_fil = _config["background_fil"]
 
-# Polarization config
-ignore_polarization = True
-stokes_mode = "I"
-# XX_dir = "/data/Raid0/obs_data/33exoplanets/xx/"
-# YY_dir = "/data/Raid0/obs_data/33exoplanets/yy/"
-XX_dir = "./data/33exoplanets/xx/"
-YY_dir = "./data/33exoplanets/yy/"
-Beam = [1, 14, 3, 7, 15]
-# Beam = [8, 16, 4, 9, 17]
-# Beam = [10, 18, 5, 11, 19]
-# Beam = [12, 2, 6, 13]
-# Beam = [1, 10]
-# Beam = [4]
-# Beam = None
+ignore_polarization = _config["ignore_polarization"]
+stokes_mode = _config["stokes_mode"]
+XX_dir = _config["XX_dir"]
+YY_dir = _config["YY_dir"]
+Beam = _config["Beam"]
 
-# Observation data
-# obs_file_path = "./data/BLIS692NS/BLIS692NS_data/spliced_blc00010203040506o7o0111213141516o7o0212223242526o7o031323334353637_guppi_58060_26569_HIP17147_0021.gpuspec.0002.fil"
-# obs_file_path = "./data/BLIS692NS/BLIS692NS_data/spliced_blc00010203040506o7o0111213141516o7o0212223242526o7o031323334353637_guppi_58060_26569_HIP17147_0021.gpuspec.0000.fil"
-# obs_file_path = "./data/BLIS692NS/BLIS692NS_data/spliced_blc00010203040506o7o0111213141516o7o0212223242526o7o031323334353637_guppi_58060_26569_HIP17147_0021.gpuspec.0000_chunk30720000_part0.fil"
-obs_file_path = "data/33exoplanets/xx/tmp/Kepler-438_M01_pol1_f1140.50-1140.70.fil"
-# obs_file_path = "data/33exoplanets/yy/Kepler-438_M01_pol2_f1140.50-1140.70.fil"
-# obs_file_path = "./data/33exoplanets/xx/HD-180617_M04_pol1_f1404.00-1404.10.fil"
-# obs_file_path = "./data/33exoplanets/yy/HD-180617_M04_pol2_f1404.00-1404.10.fil"
-# obs_file_path = './data/33exoplanets/'
-obs_file_path = [XX_dir, YY_dir] if ignore_polarization else obs_file_path
+obs_file_path = _config["obs_file_path"]
+obs_suffixes = _config["obs_suffixes"]
 
-# Prediction config
-RAW = False
-batch_size = 1  # ⚠️Fixed to 1 for now, cannot use batch_size > 1, which will break the data.
-num_workers = 0
-pred_dir = "./pred_results"
-pred_steps = 9999999
-# dwtnet_ckpt = Path("./checkpoints/mswunet/bin1024") / "best_model.pth"
-dwtnet_ckpt = Path("./checkpoints/mswunet/bin256") / "final.pth"
-# dwtnet_ckpt = Path("./checkpoints/mswunet/bin256") / "case_model.pth"
-unet_ckpt = Path("./checkpoints/unet") / "best_model.pth"
-P = 2
+RAW = _config["RAW"]
+batch_size = _config["batch_size"]
+num_workers = _config["num_workers"]
+pred_dir = _config["pred_dir"]
+pred_steps = _config["pred_steps"]
+dwtnet_ckpt = _config["dwtnet_ckpt"]
+unet_ckpt = _config["unet_ckpt"]
+P = _config["P"]
 
-# NMS config
-nms_kargs = dict(
-    iou_thresh=0.,
-    score_thresh=0.5)
-if pmode == 'yolo':
-    nms_kargs['top_k'] = None
+nms_kargs = _config["nms_kargs"]
 
-# hits config
-drift = [-4.0, 4.0]  # work only for mask mode
-snr_threshold = 5.0
-pad_fraction = 0.5
-fsnr_args = dict(
-    fsnr_threshold=300,
-    top_fraction=0.001,
-    min_pixels=50)
-dedrift_args = dict(
-    df_hz=df,
-    dt_s=dt,
-    guard_bins=3
-)
+drift = _config["drift"]
+snr_threshold = _config["snr_threshold"]
+pad_fraction = _config["pad_fraction"]
+fsnr_args = _config["fsnr_args"]
+dedrift_args = _config["dedrift_args"]
 
-# Model config
-dim = 64
-levels = [2, 4, 8, 16]
-feat_channels = 64
-dwtnet_args = dict(
-    in_chans=1,
-    dim=dim,
-    levels=levels,
-    wavelet_name='db4',
-    extension_mode='periodization')
-detector_args = dict(
-    fchans=fchans,
-    N=5,
-    num_classes=2,
-    feat_channels=feat_channels,
-    dropout=0.005)
+dwtnet_args = _config["dwtnet_args"]
+unet_args = _config["unet_args"]
+detect_backend = _config["detect_backend"]
+detector_args = _config["detector_args"]
+trackline_args = _config["trackline_args"]
 
-unet_args = dict()
+del _config
 
 
 def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
     # Set random seeds
     torch.manual_seed(42)
     np.random.seed(42)
-    global batch_size
+    global batch_size, ignore_polarization, t_adaptive, obs_suffixes
     if batch_size != 1:
         print(f"[\033[31mSevere Warn\033[0m] !!!! Batch size is fixed to 1 for now, cannot use batch_size > 1 !!!!")
         batch_size = 1
+    if Settings.WORKFLOW == "CE4":
+        print(
+            "[\033[33mWarn\033[0m] CE4 workflow enabled: using CE4Waterfall adapter as a reuse path; forcing ignore_polarization=False, t_adaptive=False, and obs_suffixes=['.2c']."
+        )
+        ignore_polarization = False
+        obs_suffixes = [".2c"]
 
     # Set device
     def check_device(dev):
@@ -242,6 +208,19 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
 
     print(f"\n[\033[32mInfo\033[0m] Using device: {device}")
 
+    active_detect_backend = detect_backend
+    if pmode != "detection":
+        active_detect_backend = "regressor"
+
+    def get_msw_model_spec(backend):
+        if backend == "trackline":
+            return DenoMSWNet, dict(dwtnet_args)
+        return DetMSWNet, {**dwtnet_args, **detector_args}
+
+    trackline_detector = None
+    if active_detect_backend == "trackline":
+        trackline_detector = TrackLineDetector(**trackline_args, line_iou=nms_kargs["iou_thresh"])
+
     # Create datasets based on mode and obs flag
     if obs and mode != "pipeline":
         if ignore_polarization:
@@ -250,8 +229,8 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
                     "In observation mode ignoring polarization, observation data should be a list of [pol1_dir, pol2_dir, ...].")
             else:
                 matched, _ = match_polarization_files(
-                    sorted([f for f in Path(obs_file_path[0]).iterdir() if f.suffix in [".fil", ".h5"]]) + sorted(
-                        [f for f in Path(obs_file_path[1]).iterdir() if f.suffix in [".fil", ".h5"]]), M_list=Beam)
+                    sorted([f for f in Path(obs_file_path[0]).iterdir() if f.suffix.lower() in obs_suffixes]) + sorted(
+                        [f for f in Path(obs_file_path[1]).iterdir() if f.suffix.lower() in obs_suffixes]), M_list=Beam)
                 obs_file_1st = matched[0]
         else:
             if isinstance(obs_file_path, list):
@@ -264,7 +243,8 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
         print("[\033[32mInfo\033[0m] Using observation data from:", obs_file_1st)
         dataset = SETIWaterFullDataset(file_path=obs_file_1st, patch_t=patch_t, patch_f=patch_f,
                                        overlap_pct=overlap_pct, ignore_polarization=ignore_polarization,
-                                       stokes_mode=stokes_mode)
+                                       stokes_mode=stokes_mode, t_adaptive=t_adaptive,
+                                       adaptive_scale=adaptive_scale)
         pred_dataloader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=True)
     else:
 
@@ -283,7 +263,8 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
         pred_dir = Path(pred_dir) / "dbl"
         print("[\033[32mInfo\033[0m] Running dual-model comparison mode")
         # Load both models
-        dwtnet = load_model(MSWNet, dwtnet_ckpt, **dwtnet_args, **detector_args)
+        msw_model_class, msw_model_kwargs = get_msw_model_spec(active_detect_backend)
+        dwtnet = load_model(msw_model_class, dwtnet_ckpt, **msw_model_kwargs)
         unet = load_model(UNet, unet_ckpt)
         # Process the same samples with both models
         for idx, batch in enumerate(pred_dataloader):
@@ -292,14 +273,23 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
             print(f"[\033[32mInfo\033[0m] Processing sample {idx + 1}/{pred_steps}")
             print("[\033[32mInfo\033[0m] Running MSWNet inference...")
             pred(dwtnet, data_mode='dbl', mode=pmode, data=batch, idx=idx, save_dir=pred_dir, device=device,
-                 save_npy=False, plot=True, **nms_kargs)
+                 save_npy=False, plot=True, detect_backend=active_detect_backend,
+                 trackline_detector=trackline_detector, group_nms=nms_kargs, group_fsnr=fsnr_args,
+                 group_dedrift=dedrift_args)
             print("[\033[32mInfo\033[0m] Running UNet inference...")
             pred(unet, data_mode='dbl', mode=pmode, data=batch, idx=idx, save_dir=pred_dir, device=device,
-                 save_npy=False, plot=True, **nms_kargs)
+                 save_npy=False, plot=True, detect_backend=active_detect_backend,
+                 trackline_detector=trackline_detector, group_nms=nms_kargs, group_fsnr=fsnr_args,
+                 group_dedrift=dedrift_args)
 
 
     elif mode == "pipeline":
         print("[\033[32mInfo\033[0m] Running pipeline processing mode")
+        app = None
+        if ui:
+            app = QApplication.instance()
+            if app is None:
+                app = QApplication(sys.argv)
 
         all_files = []
         if ignore_polarization:
@@ -320,8 +310,8 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
                         f"[\033[31mError\033[0m] Both elements in observation data path must be directories when ignoring polarization: {obs_file_path}")
                     sys.exit(1)
 
-                xx_files = sorted([f for f in xx_dir.iterdir() if f.suffix in [".fil", ".h5"]])
-                yy_files = sorted([f for f in yy_dir.iterdir() if f.suffix in [".fil", ".h5"]])
+                xx_files = sorted([f for f in xx_dir.iterdir() if f.suffix.lower() in obs_suffixes])
+                yy_files = sorted([f for f in yy_dir.iterdir() if f.suffix.lower() in obs_suffixes])
 
                 # Match by base name, assuming xx_files have _pol1, yy have _pol2
                 all_files = xx_files + yy_files
@@ -329,7 +319,7 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
             elif isinstance(obs_file_path, str) and Path(obs_file_path).is_dir():
                 # Single directory, collect all files
                 obs_path = Path(obs_file_path)
-                all_files = sorted([f for f in obs_path.iterdir() if f.suffix in [".fil", ".h5"]])
+                all_files = sorted([f for f in obs_path.iterdir() if f.suffix.lower() in obs_suffixes])
             else:
                 print(
                     f"[\033[31mError\033[0m] Invalid observation data path format: {obs_file_path}")
@@ -353,7 +343,7 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
                 sys.exit(1)
             obs_path = Path(obs_file_path)
             if obs_path.is_dir():
-                file_list = sorted([f for f in obs_path.iterdir() if f.suffix in [".fil", ".h5"]])
+                file_list = sorted([f for f in obs_path.iterdir() if f.suffix.lower() in obs_suffixes])
                 if not file_list:
                     print(f"[\033[31mError\033[0m] No .fil or .h5 files found in directory: {obs_path}")
                     sys.exit(1)
@@ -370,20 +360,24 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
                 print(f"[\033[32mInfo\033[0m] Processing file: {f}")
                 file_path_for_dataset = str(f)
                 f_log_dir = f.stem
+            if Settings.WORKFLOW == "CE4":
+                f_log_dir = Path("CE4") / f_log_dir
             dataset = SETIWaterFullDataset(file_path=file_path_for_dataset, patch_t=patch_t, patch_f=patch_f,
                                            overlap_pct=overlap_pct, device=device,
-                                           ignore_polarization=ignore_polarization, stokes_mode=stokes_mode)
+                                           ignore_polarization=ignore_polarization, stokes_mode=stokes_mode,
+                                           t_adaptive=t_adaptive, adaptive_scale=adaptive_scale)
 
             # Load model
-            model = load_model(MSWNet, dwtnet_ckpt, **dwtnet_args, **detector_args)
+            msw_model_class, msw_model_kwargs = get_msw_model_spec(active_detect_backend)
+            model = load_model(msw_model_class, dwtnet_ckpt, **msw_model_kwargs)
 
             if ui:
                 if RAW:
                     print("[\033[33mWarn\033[0m] UI mode cannot be used with RAW output, using original config...")
-                    app = QApplication(sys.argv)
                 renderer = SETIWaterfallRenderer(dataset, model, device, mode=pmode, log_dir=f_log_dir, drift=drift,
                                                  snr_threshold=snr_threshold, min_abs_drift=drift_min_abs,
-                                                 verbose=verbose, **nms_kargs, **fsnr_args)
+                                                 verbose=verbose, detect_backend=active_detect_backend,
+                                                 trackline_detector=trackline_detector, **nms_kargs, **fsnr_args)
                 renderer.setWindowTitle(f"SETI Waterfall Data Processor - {f_log_dir}")
                 renderer.show()
                 if idx == len(file_list) - 1:
@@ -399,7 +393,8 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
                 processor = SETIPipelineProcessor(dataset, model, device, mode=pmode, log_dir=f_log_dir,
                                                   raw_output=RAW, drift=drift, snr_threshold=snr_threshold,
                                                   pad_fraction=pad_fraction, min_abs_drift=drift_min_abs,
-                                                  verbose=verbose, **nms_kargs, **fsnr_args)
+                                                  verbose=verbose, detect_backend=active_detect_backend,
+                                                  trackline_detector=trackline_detector, **nms_kargs, **fsnr_args)
                 processor.process_all_patches()
 
     else:
@@ -408,15 +403,20 @@ def main(mode=None, ui=False, obs=False, verbose=False, device=None, *args):
         # --- 推理 MSWNet ---
         if execute0:
             print("[\033[32mInfo\033[0m] Running MSWNet inference...")
-            dwtnet = load_model(MSWNet, dwtnet_ckpt, **dwtnet_args, **detector_args)
+            msw_model_class, msw_model_kwargs = get_msw_model_spec(active_detect_backend)
+            dwtnet = load_model(msw_model_class, dwtnet_ckpt, **msw_model_kwargs)
             pred(dwtnet, mode=pmode, data=pred_dataloader, save_dir=pred_dir, device=device, max_steps=pred_steps,
-                 save_npy=False, plot=True, group_nms=nms_kargs, group_fsnr=fsnr_args, group_dedrift=dedrift_args)
+                 save_npy=False, plot=True, detect_backend=active_detect_backend,
+                 trackline_detector=trackline_detector, group_nms=nms_kargs, group_fsnr=fsnr_args,
+                 group_dedrift=dedrift_args)
         # --- 推理 UNet ---
         if execute1:
             print("[\033[32mInfo\033[0m] Running UNet inference...")
             unet = load_model(UNet, unet_ckpt, **unet_args)
             pred(unet, mode=pmode, data=pred_dataloader, save_dir=pred_dir, device=device, max_steps=pred_steps,
-                 save_npy=False, plot=True, group_nms=nms_kargs, group_fsnr=fsnr_args, group_dedrift=dedrift_args)
+                 save_npy=False, plot=True, detect_backend=active_detect_backend,
+                 trackline_detector=trackline_detector, group_nms=nms_kargs, group_fsnr=fsnr_args,
+                 group_dedrift=dedrift_args)
 
 
 if __name__ == "__main__":

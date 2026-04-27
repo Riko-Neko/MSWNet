@@ -7,8 +7,10 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from config.settings import Settings
 # from blimpy import Waterfall
 from external.Waterfall import Waterfall
+from utils.CE4_utils import CE4Waterfall
 
 system = platform.system()
 if system == 'Windows':
@@ -24,7 +26,7 @@ else:  # Linux
 
 class SETIWaterFullDataset(Dataset):
     def __init__(self, file_path, patch_t, patch_f, overlap_pct=0.02, device="cpu", ignore_polarization=False,
-                 stokes_mode="I", t_adaptive=True):
+                 stokes_mode="I", t_adaptive=True, adaptive_scale=None):
         """
         A dataset class that extracts time-frequency patches from SETI filterbank files (.fil),
         optionally combining multiple polarization files into Stokes parameters.
@@ -42,10 +44,12 @@ class SETIWaterFullDataset(Dataset):
                 "Q" → linear polarization difference (xx − yy)
                 (reserved for "U", "V" in future)
             t_adaptive (bool): adapt to different t channels (default: True)
+            adaptive_scale (list | None): adaptive time-channel range [min_t, max_t].
         """
         self.device = device
         self.ignore_polarization = ignore_polarization
         self.stokes_mode = stokes_mode.upper()
+        self.adaptive_scale = adaptive_scale
 
         if ignore_polarization:
             assert isinstance(file_path, (list, tuple)) and len(file_path) >= 2, \
@@ -58,10 +62,10 @@ class SETIWaterFullDataset(Dataset):
                           .replace("_pol3", "") for f in file_path]
             assert len(set(base_names)) == 1, \
                 "All polarization files must have identical names except for the 'pol' part."
-            self.obs_list = [Waterfall(fp, load_data=True) for fp in file_path]
+            self.obs_list = [SETIWaterFullDataset.open_waterfall(fp, load_data=True) for fp in file_path]
             self.obs = self.obs_list[0]  # Reference polarization
         else:
-            self.obs = Waterfall(file_path, load_data=True)
+            self.obs = SETIWaterFullDataset.open_waterfall(file_path, load_data=True)
             self.obs_list = [self.obs]
 
         self.tchans = self.obs.selection_shape[0]
@@ -72,10 +76,18 @@ class SETIWaterFullDataset(Dataset):
         else:
             self.ascending = False
 
-        if not t_adaptive:
-            assert patch_t <= self.tchans, "patch_t larger than available time channels."
+        if self.adaptive_scale is None:
+            if not t_adaptive:
+                assert patch_t <= self.tchans, "patch_t larger than available time channels."
+            else:
+                patch_t = self.tchans
         else:
-            patch_t = self.tchans
+            if self.tchans < self.adaptive_scale[0]:
+                assert patch_t <= self.tchans, "patch_t smaller than minimum adaptive time scale."
+            elif self.tchans > self.adaptive_scale[1]:
+                patch_t = self.adaptive_scale[1]
+            else:
+                patch_t = self.tchans
         assert patch_f <= self.fchans, "patch_f larger than available frequency channels."
 
         overlap_t = round(patch_t * overlap_pct)
@@ -157,6 +169,12 @@ class SETIWaterFullDataset(Dataset):
             f_min, f_max = self.freqs[end_f - 1], self.freqs[start_f]
 
         return patch_tensor, (f_min, f_max), (start_t, end_t)
+
+    @staticmethod
+    def open_waterfall(file_path, **kwargs):
+        if Settings.WORKFLOW == "CE4" and Path(file_path).suffix.lower() == ".2c":
+            return CE4Waterfall(file_path, **kwargs)
+        return Waterfall(file_path, **kwargs)
 
 
 def plot_dataset_item(dataset, index=0, cmap='viridis', log_scale=False):

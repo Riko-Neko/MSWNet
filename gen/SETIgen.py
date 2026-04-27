@@ -22,6 +22,24 @@ from gen.FRIgen import add_rfi
 from utils.det_utils import plot_F_lines
 
 
+def frame_from_background_waterfall(waterfall):
+    try:
+        return stg.Frame(waterfall)
+    except FileNotFoundError:
+        freqs, data = waterfall.grab_data()
+        ascending = bool(freqs[0] < freqs[-1]) if len(freqs) > 1 else True
+        fch1 = float(freqs[0] if ascending else freqs[-1]) * u.MHz
+        return stg.Frame(
+            fchans=data.shape[1],
+            tchans=data.shape[0],
+            df=abs(float(waterfall.header['foff'])) * u.MHz,
+            dt=float(waterfall.header['tsamp']) * u.s,
+            fch1=fch1,
+            ascending=ascending,
+            data=np.asarray(data, dtype=np.float64),
+        )
+
+
 def sim_dynamic_spec_seti(fchans, tchans, df, dt, fch1=None, ascending=False, signals=None, noise_x_mean=0.0,
                           noise_x_std=1.0, mode='test', noise_type='normal', rfi_params=None, seed=None, plot=False,
                           plot_filename=None, rfi_enhance=False, waterfall_itr=None):
@@ -139,9 +157,17 @@ def sim_dynamic_spec_seti(fchans, tchans, df, dt, fch1=None, ascending=False, si
 
     fil_flag = False
     if waterfall_itr:
-        waterfall = next(waterfall_itr)
-        # 创建 Frame (使用背景噪声)
-        frame = stg.Frame(waterfall)
+        max_background_attempts = 32
+        frame = None
+        for _ in range(max_background_attempts):
+            waterfall = next(waterfall_itr)
+            frame = frame_from_background_waterfall(waterfall)
+            if np.isfinite(frame.noise_std) and frame.noise_std > 0:
+                break
+            if Settings.DEBUG:
+                print(f"[\033[33mWarn\033[0m] Skip background frame with invalid noise_std: {frame.noise_std}")
+        if frame is None or not np.isfinite(frame.noise_std) or frame.noise_std <= 0:
+            raise ValueError("[\033[31mError\033[0m] Failed to find a usable background frame with non-zero noise.")
         clean_spec = np.zeros_like(frame.data)
         fil_flag = True
     else:
