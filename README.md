@@ -273,7 +273,10 @@ python pred.py --mode pipeline --ui
 
 ### CE4 Support
 
-The repository also supports CE4 `.2C` data through dedicated runtime profiles and local utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py).
+CE4 is the Chang'e-4 low-frequency radio observation products distributed in the `.2C` format. The repository also supports CE4 data through dedicated runtime profiles and local utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py).
+
+Current support covers local inspection, patch extraction, denoising inference, candidate export, and the CE4-specific auxiliary scripts already included in the repository.
+This path reuses the same overall pipeline structure as the main FAST-style workflow, while switching the observation adapter and profile settings for `.2C` inputs.
 
 Example pipeline entry:
 
