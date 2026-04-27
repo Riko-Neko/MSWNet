@@ -106,8 +106,6 @@ Training and inference are now profile-driven rather than controlled by large bl
 
 The main public documentation below uses a short local profile named `quick_start`. It is intended as a compact public-facing example path for verifying the pipeline and synthetic workflow without exposing the longer internal observation-profile names in the README.
 
-The repository also includes a usable side path for **CE4 `.2C` observation products**, along with dedicated runtime profiles and local inspection utilities.
-
 ## Data Conventions
 
 ### Observation Data
@@ -129,8 +127,6 @@ The expected file naming pattern is still:
 - the `_pol1` / `_pol2` polarization suffix
 
 When polarization pairing is enabled by the selected profile, the pipeline matches the two directories by this naming convention and combines the paired inputs into `Stokes I` by default.
-
-The repository also supports CE4 `.2C` data through dedicated profiles and utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py). In practice the entry is still [`pred.py`](pred.py), with the runtime profile deciding whether the observation path is the standard FAST-style `.fil` / `.h5` workflow or the CE4 `.2C` workflow.
 
 ### Synthetic Training Data
 
@@ -275,16 +271,14 @@ Pipeline with UI:
 python pred.py --mode pipeline --ui
 ```
 
-For the CE4 `.2C` side path:
+### CE4 Support
+
+The repository also supports CE4 `.2C` data through dedicated runtime profiles and local utilities such as [`data/CE4_2C_checker.py`](data/CE4_2C_checker.py).
+
+Example pipeline entry:
 
 ```bash
 WORKFLOW=CE4 CONFIG=ce4 python pred.py --mode pipeline
-```
-
-For quick local inspection of a `.2C` product:
-
-```bash
-python data/CE4_2C_checker.py <your_file.2C> [f_start] [f_stop]
 ```
 
 ### What the Pipeline Actually Does
